@@ -722,6 +722,7 @@ function showSettings() {
       row("ISO 临时目录", c.temp_dir || "系统临时目录"),
       row("同时运行的任务", String(c.max_jobs)),
       row("每盘截图", `${c.screenshot_count} 张（按 jietu 规则取点）`),
+      row("比例修正", c.aspect === "jietu" ? "jietu：按 PAR，只放大不缩小" : "minfo：按 DAR，高度不变"),
       row("图床", `Pixhost（${c.pixhost_domain}）${c.proxy ? "，经代理" : ""}`),
       row("默认 Tracker", c.announces.join("\n") || "无"),
       row("默认分块", `${pieceLabel(c.piece_length)}（2^${c.piece_length}）`),

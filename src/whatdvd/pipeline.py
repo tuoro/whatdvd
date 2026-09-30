@@ -10,7 +10,7 @@ from .dvd import Disc, tv_standard
 from .mediainfo import build_report
 from .naming import mediainfo_name, screenshot_name
 from .probe import VideoInfo, probe_duration, probe_video
-from .resolution import display_size
+from .resolution import screenshot_size
 from .runner import Runner
 from .screenshots import capture, compress, format_timestamp, timestamps
 
@@ -49,12 +49,12 @@ class DiscOutput:
         return [shot for shot in self.shots if not shot.ok]
 
 
-def analyze(runner: Runner, disc: Disc) -> Analysis:
+def analyze(runner: Runner, disc: Disc, aspect: str = "minfo") -> Analysis:
     video = probe_video(runner, disc.vob)
     return Analysis(
         disc=disc,
         video=video,
-        size=display_size(video.width, video.height, video.par),
+        size=screenshot_size(video.width, video.height, video.par, video.dar, aspect),
         duration=probe_duration(runner, disc.vob),
     )
 

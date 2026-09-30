@@ -230,6 +230,7 @@ def create_app(
         return {
             "roots": [str(root) for root in config.roots],
             "screenshot_count": config.screenshot_count,
+            "aspect": config.aspect,
             "pixhost_domain": config.pixhost_domain,
             "announces": list(config.announces),
             "piece_length": config.piece_length,
@@ -292,6 +293,7 @@ def create_app(
             temp_dir=config.temp_dir,
             upload=job.params["upload"],
             template=config.template,
+            aspect=config.aspect,
         )
         return _serialize_run(run(runner, job.path, options, reporter, host_factory))
 

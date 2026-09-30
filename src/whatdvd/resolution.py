@@ -23,3 +23,41 @@ def display_size(width: int, height: int, par: float) -> tuple[int, int]:
         return width, new_height + new_height % 2
     new_width = _awk_int(width * par)
     return new_width + new_width % 2, height
+
+
+ASPECT_MODES = ("minfo", "jietu")
+"""截图比例修正方式：minfo 按 DAR、高度不变；jietu 按 PAR、只放大不缩小。"""
+
+# minfo 把接近这些比例的 DAR 视为该比例（误差 0.01 以内）
+_KNOWN_RATIOS = (4 / 3, 16 / 9, 1.85, 2.39, 2.35)
+
+
+def _even_floor(value: float) -> int:
+    size = int(value)
+    return max(size - size % 2, 2)
+
+
+def display_size_minfo(width: int, height: int, dar: float | None, par: float) -> tuple[int, int]:
+    """同 minfo：DAR 与编码画面比例相差超过 0.02 时，高度不变，宽 = 高 × DAR，向下取偶数。
+
+    没有 DAR 时退回按 PAR 换算宽度（同样向下取偶数）。
+    """
+    if dar is not None and dar > 0:
+        for known in _KNOWN_RATIOS:
+            if abs(dar - known) <= 0.01:
+                dar = known
+                break
+        if abs(dar - width / height) > 0.02:
+            return _even_floor(height * dar), height
+        return width, height
+    if par == 1:
+        return width, height
+    return _even_floor(width * par), height
+
+
+def screenshot_size(width: int, height: int, par: float, dar: float | None, mode: str) -> tuple[int, int]:
+    if mode == "jietu":
+        return display_size(width, height, par)
+    if mode == "minfo":
+        return display_size_minfo(width, height, dar, par)
+    raise ValueError(f"未知的比例修正方式：{mode}")

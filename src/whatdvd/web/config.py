@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from ..post import DEFAULT_TEMPLATE, TemplateError, load_template
+from ..resolution import ASPECT_MODES
 from ..torrent import DEFAULT_PIECE_LENGTH, PIECE_LENGTH_RANGE
 from ..upload import PIXHOST_DOMAINS
 
@@ -40,6 +41,7 @@ class ServerConfig:
     max_jobs: int = 1
     temp_dir: Path | None = None
     screenshot_count: int = 10
+    aspect: str = "minfo"
     pixhost_domain: str = PIXHOST_DOMAINS[0]
     proxy: str | None = None
     announces: tuple[str, ...] = ()
@@ -58,6 +60,7 @@ _SCHEMA: dict[tuple[str, str], type | tuple[type, ...]] = {
     ("", "temp_dir"): str,
     ("", "max_jobs"): int,
     ("screenshots", "count"): int,
+    ("screenshots", "aspect"): str,
     ("pixhost", "domain"): str,
     ("pixhost", "proxy"): str,
     ("torrent", "announces"): list,
@@ -181,6 +184,10 @@ def load_config(
     if max_jobs < 1 or count < 1:
         raise ConfigError("max_jobs 和 screenshots.count 必须是正整数")
 
+    aspect = flat.get(("screenshots", "aspect"), ASPECT_MODES[0])
+    if aspect not in ASPECT_MODES:
+        raise ConfigError(f"screenshots.aspect 只能是 {' 或 '.join(ASPECT_MODES)}")
+
     domain = flat.get(("pixhost", "domain"), PIXHOST_DOMAINS[0])
     if domain not in PIXHOST_DOMAINS:
         raise ConfigError(f"pixhost.domain 只能是 {' 或 '.join(PIXHOST_DOMAINS)}")
@@ -210,6 +217,7 @@ def load_config(
         max_jobs=max_jobs,
         temp_dir=_expand(temp_dir) if temp_dir else None,
         screenshot_count=count,
+        aspect=aspect,
         pixhost_domain=domain,
         proxy=flat.get(("pixhost", "proxy")) or None,
         announces=tuple(a.strip() for a in announces),

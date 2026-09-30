@@ -7,10 +7,15 @@ from whatdvd.probe import ProbeError, probe_duration, probe_video
 
 
 def test_probe_video_reads_first_stream() -> None:
-    runner = FakeRunner(lambda argv: ok(argv, "1.422|720|576|1.185|720|480|\n"))
+    runner = FakeRunner(lambda argv: ok(argv, "1.422|720|576|1.778|1.185|720|480|1.778|\n"))
     info = probe_video(runner, Path("x.VOB"))
-    assert (info.width, info.height, info.par, info.par_text) == (720, 576, 1.422, "1.422")
-    assert runner.calls[0][1] == "--Inform=Video;%PixelAspectRatio%|%Width%|%Height%|"
+    assert (info.width, info.height, info.par, info.par_text, info.dar) == (720, 576, 1.422, "1.422", 1.778)
+    assert runner.calls[0][1] == "--Inform=Video;%PixelAspectRatio%|%Width%|%Height%|%DisplayAspectRatio%|"
+
+
+def test_probe_video_without_dar() -> None:
+    runner = FakeRunner(lambda argv: ok(argv, "1.422|720|576||\n"))
+    assert probe_video(runner, Path("x.VOB")).dar is None
 
 
 def test_probe_video_without_video_stream() -> None:

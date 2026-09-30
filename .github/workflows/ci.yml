@@ -60,7 +60,7 @@ jobs:
               data = (out / name).read_bytes()[:24]
               return struct.unpack(">II", data[16:24])
           assert size("Disc.1.VTS_02_1.VOB.scr1.png") == (1024, 576)
-          assert size("Disc.2.VTS_01_1.VOB.scr1.png") == (720, 540)
+          assert size("Disc.2.VTS_01_1.VOB.scr1.png") == (640, 480)
           assert size("Disc.One.VTS_02_1.VOB.scr1.png") == (1024, 576)
           assert "Disc One/VIDEO_TS/VTS_02_1.VOB" in (out / "Disc.One.VTS_02_1.VOB.mediainfo.txt").read_text()
           assert (out / "Sample.Movie.2001.torrent").stat().st_size > 0

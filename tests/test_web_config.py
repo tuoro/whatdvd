@@ -80,6 +80,7 @@ def test_token_from_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
         ("[torrent]\nannounces = [\"\"]", "announces"),
         ("[post]\ntemplate = \"/nonexistent/template.txt\"", "模板"),
         ("port = 0", "端口无效"),
+        ("[screenshots]\naspect = \"square\"", "screenshots.aspect"),
         ("roots = [", "格式有误"),
     ],
 )

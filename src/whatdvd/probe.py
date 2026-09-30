@@ -9,8 +9,8 @@ from pathlib import Path
 from .runner import Runner
 
 # 结尾的 "|" 用来隔开多条视频流的输出。
-_VIDEO_INFORM = "Video;%PixelAspectRatio%|%Width%|%Height%|"
-_VIDEO_PATTERN = re.compile(r"([0-9.]+)\|(\d+)\|(\d+)\|")
+_VIDEO_INFORM = "Video;%PixelAspectRatio%|%Width%|%Height%|%DisplayAspectRatio%|"
+_VIDEO_PATTERN = re.compile(r"([0-9.]+)\|(\d+)\|(\d+)\|([0-9.]*)\|")
 
 
 class ProbeError(RuntimeError):
@@ -24,6 +24,8 @@ class VideoInfo:
     par: float
     par_text: str
     """MediaInfo 原样输出的 PAR，例如 "1.422"。"""
+    dar: float | None = None
+    """MediaInfo 的显示宽高比（小数，例如 1.778），没有时为 None。"""
 
 
 def probe_video(runner: Runner, vob: Path) -> VideoInfo:
@@ -36,8 +38,14 @@ def probe_video(runner: Runner, vob: Path) -> VideoInfo:
     match = _VIDEO_PATTERN.search(output)
     if match is None:
         raise ProbeError(f"MediaInfo 没有给出视频流的 PAR 和尺寸：{vob.name}")
-    par_text, width, height = match.groups()
-    return VideoInfo(width=int(width), height=int(height), par=float(par_text), par_text=par_text)
+    par_text, width, height, dar_text = match.groups()
+    return VideoInfo(
+        width=int(width),
+        height=int(height),
+        par=float(par_text),
+        par_text=par_text,
+        dar=float(dar_text) if dar_text else None,
+    )
 
 
 def probe_duration(runner: Runner, vob: Path) -> int:

@@ -95,6 +95,8 @@ class RunOptions:
     """False 时只识别，不生成截图和 MediaInfo（scan 命令）。"""
     upload: bool = True
     template: str = DEFAULT_TEMPLATE
+    aspect: str = "minfo"
+    """截图比例修正方式：minfo 或 jietu。"""
 
 
 class ClosableHost(ImageHost, Protocol):
@@ -114,7 +116,7 @@ def describe(source: Path, analysis: Analysis) -> list[str]:
         f"  IFO：{disc.ifo.name if disc.ifo else '无'}",
         f"  容量：{disc.media_type}，共 {format_bytes(disc.total_bytes)}",
         f"  制式：{analysis.standard or f'未知（高度 {video.height}）'}",
-        f"  截图尺寸：{video.width}x{video.height}，PAR {video.par_text} → {analysis.size[0]}x{analysis.size[1]}",
+        f"  截图尺寸：{video.width}x{video.height}，PAR {video.par_text}，DAR {video.dar or '无'} → {analysis.size[0]}x{analysis.size[1]}",
         f"  VOB 时长：{analysis.duration} 秒",
     ]
 
@@ -138,7 +140,7 @@ def _process_discs(runner: Runner, path: Path, options: RunOptions, reporter: Re
         results.append(result)
         try:
             with open_disc(runner, source, path, options.temp_dir) as disc:
-                result.analysis = analyze(runner, disc)
+                result.analysis = analyze(runner, disc, options.aspect)
                 for line in describe(source, result.analysis):
                     reporter.info(line)
                 if not options.generate:

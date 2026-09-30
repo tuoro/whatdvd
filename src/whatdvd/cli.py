@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .post import TemplateError, load_template
 from .runner import CommandError, Runner, SubprocessRunner
+from .resolution import ASPECT_MODES
 from .torrent import DEFAULT_PIECE_LENGTH, PIECE_LENGTH_RANGE, make_torrent
 from .upload import PIXHOST_DOMAINS, Pixhost
 from .workflow import RunOptions, WorkflowError, check_tools, format_bytes, output_title, run
@@ -17,6 +18,7 @@ from .workflow import RunOptions, WorkflowError, check_tools, format_bytes, outp
 __all__ = ["format_bytes", "main", "output_title"]
 
 DEFAULT_OUTPUT = Path("whatdvd-output")
+ASPECT_HELP = "截图比例修正：minfo（默认，按 DAR，高度不变）或 jietu（按 PAR，只放大不缩小）"
 
 
 class ConsoleReporter:
@@ -52,6 +54,7 @@ def _parser() -> argparse.ArgumentParser:
     scan = commands.add_parser("scan", help="识别 DVD，显示选中的文件、容量、制式和截图尺寸")
     scan.add_argument("path", type=Path, help=path_help)
     scan.add_argument("--temp-dir", type=Path, help="ISO 解包用的临时目录（默认系统临时目录）")
+    scan.add_argument("--aspect", choices=ASPECT_MODES, default=ASPECT_MODES[0], help=ASPECT_HELP)
 
     run_cmd = commands.add_parser("run", help="生成截图和 MediaInfo，上传截图并生成发布说明")
     run_cmd.add_argument("path", type=Path, help=path_help)
@@ -62,6 +65,7 @@ def _parser() -> argparse.ArgumentParser:
     run_cmd.add_argument("--pixhost-domain", choices=PIXHOST_DOMAINS, default=PIXHOST_DOMAINS[0], help="Pixhost 域名")
     run_cmd.add_argument("--proxy", help="上传图床用的 HTTP 代理，例如 http://127.0.0.1:7890")
     run_cmd.add_argument("--template", type=Path, help="发布说明模板文件，可用 $name、$mediainfo、$screenshots")
+    run_cmd.add_argument("--aspect", choices=ASPECT_MODES, default=ASPECT_MODES[0], help=ASPECT_HELP)
 
     torrent = commands.add_parser("torrent", help="用 mktorrent 生成 private 种子")
     torrent.add_argument("path", type=Path, help="要做种的文件夹或 ISO")
@@ -98,6 +102,7 @@ def _cmd_media(args: argparse.Namespace, runner: Runner) -> int:
         generate=is_run,
         upload=is_run and not args.no_upload,
         template=template,
+        aspect=args.aspect,
     )
     try:
         result = run(

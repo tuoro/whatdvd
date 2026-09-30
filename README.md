@@ -95,7 +95,7 @@ journalctl --user -u whatdvd -f                          # 查看日志
 
 升级：`pipx upgrade whatdvd && systemctl --user restart whatdvd`。
 
-## 规则摘要（同 jietu / zuozhong）
+## 规则摘要（同 jietu / zuozhong，截图尺寸默认同 minfo）
 
 | 环节 | 规则 |
 | --- | --- |
@@ -103,7 +103,7 @@ journalctl --user -u whatdvd -f                          # 查看日志
 | IFO 的 MediaInfo | 盘内体积最大的 `.IFO` |
 | MediaInfo 输出 | 一个文件，VOB 在前、IFO 在后，删除输入路径的上级目录前缀；ISO 显示为 `<ISO 名>/VIDEO_TS/…` |
 | 截图时间点 | 第 k 张取在 k × 间隔 秒；间隔按 VOB 时长分档：≥ 3600 秒 331，≥ 1500 秒 121，≥ 600 秒 71，否则 21 |
-| 截图尺寸 | 按 MediaInfo 的 PAR 只放大不缩小：PAR > 1 放大宽度，否则放大高度，结果取偶数 |
+| 截图尺寸 | 默认同 minfo：按 MediaInfo 的 DAR，高度不变，宽 = 高 × DAR（向下取偶数），NTSC 4:3 → 640×480。设置 `aspect = "jietu"`（或 `--aspect jietu`）改为 jietu 的做法：按 PAR 只放大不缩小，NTSC 4:3 → 720×540 |
 | 画面处理 | 除尺寸换算外不做任何处理 |
 | 做种 | `mktorrent -v -p -l 24`，announce 可不填 |
 
