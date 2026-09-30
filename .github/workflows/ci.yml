@@ -82,7 +82,9 @@ jobs:
           # 首次启动自动生成 token，保存在输出卷；用 docker exec 查看
           docker exec web whatdvd token
           TOKEN=$(docker exec web whatdvd token | sed -n 's/^token：\([^（]*\)（.*/\1/p')
-          test -n "$TOKEN" && test "$TOKEN" = "$(tr -d '\n' < /tmp/out/.whatdvd/token)"
+          # token 文件属于容器用户（uid 1000）且权限为 600，CI 的 runner 用户需要 sudo 才能读
+          test -n "$TOKEN" && test "$TOKEN" = "$(sudo cat /tmp/out/.whatdvd/token | tr -d '\n')"
+          test "$(sudo stat -c '%a %u' /tmp/out/.whatdvd/token)" = "600 1000"
           curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:26873/api/config | grep -q '"/media"'
           # 重启后 token 不变
           docker restart web && sleep 3
