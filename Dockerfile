@@ -17,11 +17,12 @@ RUN pip install --no-cache-dir /wheels/*.whl && rm -rf /wheels \
 COPY docker/config.toml /config/config.toml
 
 USER whatdvd
-ENV PYTHONUNBUFFERED=1
+ENV PYTHONUNBUFFERED=1 \
+    WHATDVD_CONFIG=/config/config.toml
 EXPOSE 26873
 VOLUME ["/output"]
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:26873/', timeout=4)"
 ENTRYPOINT ["whatdvd"]
 # 容器内必须监听 0.0.0.0 才能被端口映射访问；对外只映射到宿主机 127.0.0.1，见 docker-compose.yml
-CMD ["serve", "-c", "/config/config.toml", "--host", "0.0.0.0"]
+CMD ["serve", "--host", "0.0.0.0"]

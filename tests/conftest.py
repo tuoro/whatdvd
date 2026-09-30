@@ -46,3 +46,13 @@ def make_file(path: Path, size: int) -> Path:
 @pytest.fixture
 def fake_runner() -> type[FakeRunner]:
     return FakeRunner
+
+
+@pytest.fixture(autouse=True)
+def isolated_home(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """每个测试使用独立的 HOME，避免读写真实的 ~/.config 和 ~/.local/share。"""
+    home = tmp_path_factory.mktemp("home")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("WHATDVD_TOKEN", raising=False)
+    monkeypatch.delenv("WHATDVD_CONFIG", raising=False)
+    return home

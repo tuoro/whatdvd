@@ -119,6 +119,8 @@ input[type="checkbox"] { width: 16px; height: 16px; margin: 0; accent-color: var
 .login-title { text-align: center; }
 .login-title h1 { font-size: 26px; font-weight: 800; }
 .login-title p { color: var(--muted); font-weight: 600; }
+.login-hint { font-size: 12.5px; line-height: 1.7; color: var(--muted); }
+.login-hint code { font: 12px var(--mono); color: var(--ink-2); background: var(--panel-2); padding: 1px 5px; border-radius: 4px; white-space: nowrap; }
 
 /* ---------- 外框 ---------- */
 .shell {

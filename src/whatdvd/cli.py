@@ -77,6 +77,9 @@ def _parser() -> argparse.ArgumentParser:
     serve.add_argument("--host", help="监听地址，覆盖配置文件")
     serve.add_argument("--port", type=int, help="监听端口，覆盖配置文件")
     serve.add_argument("--root", type=Path, action="append", default=[], help="允许浏览的目录，可重复，覆盖配置文件")
+
+    token = commands.add_parser("token", help="显示 Web 界面的登录 token 和登录链接")
+    token.add_argument("-c", "--config", type=Path, help="配置文件（默认 ~/.config/whatdvd/config.toml）")
     return parser
 
 
@@ -143,10 +146,32 @@ def _cmd_serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_token(args: argparse.Namespace) -> int:
+    from .web.config import ConfigError, read_token
+    from .web.server import login_url
+
+    try:
+        token, host, port = read_token(args.config)
+    except ConfigError as error:
+        print(error, file=sys.stderr)
+        return 2
+    source = {
+        "config": "配置文件中的 token",
+        "env": "环境变量 WHATDVD_TOKEN",
+        "file": f"保存在 {token.file}",
+        "new": f"刚刚生成，已保存到 {token.file}",
+    }[token.source]
+    print(f"token：{token.token}（{source}）")
+    print(f"登录链接：{login_url(host, port)}?token={token.token}")
+    return 0
+
+
 def main(argv: Sequence[str] | None = None, runner: Runner | None = None) -> int:
     args = _parser().parse_args(argv)
     if args.command == "serve":
         return _cmd_serve(args)
+    if args.command == "token":
+        return _cmd_token(args)
     runner = runner or SubprocessRunner()
     if args.command == "torrent":
         return _cmd_torrent(args, runner)

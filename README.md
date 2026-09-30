@@ -47,12 +47,13 @@ whatdvd torrent "/path/to/Movie Name (2001)" -a "https://tracker.example/announc
 盒子通常没有桌面环境，可以用浏览器操作：
 
 ```bash
-cp config.example.toml ~/.config/whatdvd/config.toml   # 至少改 roots 和 token
+cp config.example.toml ~/.config/whatdvd/config.toml   # 至少改 roots
 whatdvd serve                                           # 或 whatdvd serve --root ~/downloads
+whatdvd token                                           # 查看登录 token 和登录链接
 ```
 
 - 默认只监听 `127.0.0.1:26873`。远程使用时通过 SSH 隧道（`ssh -L 26873:127.0.0.1:26873 盒子`）或 HTTPS 反向代理访问，不要直接暴露到公网。
-- 需要 token 登录。配置里不写 token 时，每次启动随机生成一个，并在终端打印带 token 的登录链接。
+- 需要 token 登录。第一次启动时自动生成并保存在 `~/.local/share/whatdvd/token`，终端会打印带 token 的登录链接；之后重启不变，随时运行 `whatdvd token` 查看。也可以在配置文件的 `token` 或环境变量 `WHATDVD_TOKEN` 中自己指定。
 - 只能浏览和处理 `roots` 中的目录；指向这些目录以外的符号链接不会显示，也无法访问。
 - 界面中可以选择 DVD 文件夹、ISO 或包含多张盘的目录，生成截图和 MediaInfo（上传图床并生成发布说明），或者做种；日志实时显示，发布说明和 MediaInfo 可一键复制，种子可直接下载。
 - 任务排队执行，默认同一时间只运行一个（`max_jobs`）。任务记录保存在内存中，重启服务后清空，输出文件保留在 `output_dir`。
@@ -63,10 +64,12 @@ whatdvd serve                                           # 或 whatdvd serve --ro
 
 ```bash
 git clone https://github.com/tuoro/whatdvd && cd whatdvd
-# 编辑 docker-compose.yml：媒体目录、WHATDVD_TOKEN、user（与媒体文件属主一致）
+# 编辑 docker-compose.yml：媒体目录、user（与媒体文件属主一致）
 docker compose up -d --build
+docker exec whatdvd whatdvd token     # 查看登录 token 和登录链接
 ```
 
+- 登录 token 第一次启动时自动生成，保存在 `./output/.whatdvd/token`，重启不变。
 - 端口只映射到宿主机 `127.0.0.1:26873`，远程访问用 SSH 隧道：`ssh -L 26873:127.0.0.1:26873 盒子`，然后打开 `http://127.0.0.1:26873`。
 - 媒体目录只读挂载到 `/media`；输出（截图、MediaInfo、发布说明、种子）在 `./output`，ISO 解包的临时文件也放在这里的 `.tmp` 中，用完即删。
 - 容器根文件系统只读，去掉所有 capability，并禁止提权。
@@ -81,11 +84,12 @@ docker compose up -d --build
 sudo apt install pipx ffmpeg mediainfo p7zip-full mktorrent
 pipx install git+https://github.com/tuoro/whatdvd
 mkdir -p ~/.config/whatdvd ~/.config/systemd/user
-cp config.example.toml ~/.config/whatdvd/config.toml      # 改 roots 和 token
+cp config.example.toml ~/.config/whatdvd/config.toml      # 改 roots
 cp packaging/systemd/whatdvd.service ~/.config/systemd/user/
 systemctl --user daemon-reload
 systemctl --user enable --now whatdvd
 sudo loginctl enable-linger "$USER"                      # 退出登录后继续运行
+whatdvd token                                            # 查看登录 token 和登录链接
 journalctl --user -u whatdvd -f                          # 查看日志
 ```
 

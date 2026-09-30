@@ -8,8 +8,10 @@ services:
     ports:
       # 只映射到宿主机本机；远程访问请用 SSH 隧道或 HTTPS 反向代理
       - "127.0.0.1:26873:26873"
-    environment:
-      WHATDVD_TOKEN: "改成一串随机字符"
+    # 登录 token 首次启动自动生成并保存在 ./output/.whatdvd/token；
+    # 查看：docker exec whatdvd whatdvd token。想自己指定时取消下面两行的注释：
+    # environment:
+    #   WHATDVD_TOKEN: "你的 token"
     volumes:
       - /path/to/downloads:/media:ro
       - ./output:/output

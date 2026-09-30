@@ -70,7 +70,7 @@ jobs:
       - name: Web 服务
         run: |
           docker run -d --name web --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
-            -p 127.0.0.1:26873:26873 -e WHATDVD_TOKEN=ci-token \
+            -p 127.0.0.1:26873:26873 \
             -v /tmp/media:/media:ro -v /tmp/out:/output whatdvd:ci
           for i in $(seq 1 30); do
             [ "$(docker inspect -f '{{.State.Health.Status}}' web)" = healthy ] && break
@@ -79,5 +79,12 @@ jobs:
           docker inspect -f '{{.State.Health.Status}}' web | grep -qx healthy
           curl -fsS http://127.0.0.1:26873/ | grep -q whatdvd
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:26873/api/config)" = 401
-          curl -fsS -H "Authorization: Bearer ci-token" http://127.0.0.1:26873/api/config | grep -q '"/media"'
+          # 首次启动自动生成 token，保存在输出卷；用 docker exec 查看
+          docker exec web whatdvd token
+          TOKEN=$(docker exec web whatdvd token | sed -n 's/^token：\([^（]*\)（.*/\1/p')
+          test -n "$TOKEN" && test "$TOKEN" = "$(tr -d '\n' < /tmp/out/.whatdvd/token)"
+          curl -fsS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:26873/api/config | grep -q '"/media"'
+          # 重启后 token 不变
+          docker restart web && sleep 3
+          test "$(docker exec web whatdvd token | sed -n 's/^token：\([^（]*\)（.*/\1/p')" = "$TOKEN"
           docker logs web

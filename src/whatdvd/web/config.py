@@ -15,6 +15,8 @@ from ..torrent import DEFAULT_PIECE_LENGTH, PIECE_LENGTH_RANGE
 from ..upload import PIXHOST_DOMAINS
 
 DEFAULT_CONFIG_PATH = Path("~/.config/whatdvd/config.toml")
+DEFAULT_TOKEN_FILE = Path("~/.local/share/whatdvd/token")
+CONFIG_ENV = "WHATDVD_CONFIG"
 DEFAULT_OUTPUT_DIR = Path("~/.local/share/whatdvd/output")
 DEFAULT_PORT = 26873
 TOKEN_ENV = "WHATDVD_TOKEN"
@@ -30,7 +32,9 @@ class ServerConfig:
     """允许在界面中浏览和处理的目录（已解析符号链接）。"""
     output_dir: Path
     token: str
-    token_generated: bool = False
+    token_source: str = "config"
+    """config（配置文件）、env（环境变量）、file（之前保存的）、new（这次新生成并保存的）。"""
+    token_file: Path | None = None
     host: str = "127.0.0.1"
     port: int = DEFAULT_PORT
     max_jobs: int = 1
@@ -48,6 +52,7 @@ _SCHEMA: dict[tuple[str, str], type | tuple[type, ...]] = {
     ("", "host"): str,
     ("", "port"): int,
     ("", "token"): str,
+    ("", "token_file"): str,
     ("", "roots"): list,
     ("", "output_dir"): str,
     ("", "temp_dir"): str,
@@ -85,11 +90,59 @@ def _expand(text: str) -> Path:
     return Path(text).expanduser()
 
 
+def config_path(path: Path | None) -> Path | None:
+    """显式指定的路径；否则环境变量 WHATDVD_CONFIG；否则默认路径（不存在时返回 None）。"""
+    if path is not None:
+        return path
+    if env := os.environ.get(CONFIG_ENV):
+        return Path(env)
+    default = DEFAULT_CONFIG_PATH.expanduser()
+    return default if default.is_file() else None
+
+
+@dataclass(frozen=True)
+class TokenInfo:
+    token: str
+    source: str
+    file: Path
+
+
+def resolve_token(flat: dict[tuple[str, str], Any]) -> TokenInfo:
+    """配置文件 > 环境变量 > 已保存的 token 文件；都没有时生成一个并保存（权限 600），之后重启不变。"""
+    file = _expand(flat.get(("", "token_file"), str(DEFAULT_TOKEN_FILE))).absolute()
+    if token := flat.get(("", "token"), "").strip():
+        return TokenInfo(token, "config", file)
+    if token := os.environ.get(TOKEN_ENV, "").strip():
+        return TokenInfo(token, "env", file)
+    try:
+        saved = file.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        saved = ""
+    except OSError as error:
+        raise ConfigError(f"无法读取 token 文件 {file}：{error.strerror}") from None
+    if saved:
+        return TokenInfo(saved, "file", file)
+    token = secrets.token_urlsafe(24)
+    try:
+        file.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(token + "\n")
+    except OSError as error:
+        raise ConfigError(f"无法保存 token 到 {file}：{error.strerror}") from None
+    return TokenInfo(token, "new", file)
+
+
+def read_token(path: Path | None = None) -> tuple[TokenInfo, str, int]:
+    """whatdvd token 用：只读取 token 和监听地址，不检查 roots 等其他配置。"""
+    flat = _read(path)
+    return resolve_token(flat), flat.get(("", "host"), "127.0.0.1"), flat.get(("", "port"), DEFAULT_PORT)
+
+
 def _read(path: Path | None) -> dict[tuple[str, str], Any]:
+    path = config_path(path)
     if path is None:
-        path = DEFAULT_CONFIG_PATH.expanduser()
-        if not path.is_file():
-            return {}
+        return {}
     try:
         with path.expanduser().open("rb") as handle:
             return _flatten(tomllib.load(handle))
@@ -117,10 +170,7 @@ def load_config(
             raise ConfigError(f"roots 中的目录不存在：{root}")
         resolved_roots.append(root.resolve())
 
-    token = flat.get(("", "token")) or os.environ.get(TOKEN_ENV, "")
-    token_generated = not token
-    if token_generated:
-        token = secrets.token_urlsafe(24)
+    token = resolve_token(flat)
 
     port = port if port is not None else flat.get(("", "port"), DEFAULT_PORT)
     if not 1 <= port <= 65535:
@@ -152,8 +202,9 @@ def load_config(
     return ServerConfig(
         roots=tuple(resolved_roots),
         output_dir=_expand(flat.get(("", "output_dir"), str(DEFAULT_OUTPUT_DIR))).absolute(),
-        token=token,
-        token_generated=token_generated,
+        token=token.token,
+        token_source=token.source,
+        token_file=token.file,
         host=host or flat.get(("", "host"), "127.0.0.1"),
         port=port,
         max_jobs=max_jobs,

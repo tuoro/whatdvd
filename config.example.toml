@@ -5,9 +5,10 @@
 host = "127.0.0.1"
 port = 26873
 
-# 登录用的 token。留空时每次启动随机生成并打印在终端；也可以用环境变量 WHATDVD_TOKEN。
-# 生成一个：python3 -c "import secrets; print(secrets.token_urlsafe(24))"
+# 登录用的 token。留空时第一次启动自动生成，保存在 token_file 中，之后重启不变；
+# 运行 whatdvd token 查看。也可以在这里或环境变量 WHATDVD_TOKEN 中直接指定。
 token = ""
+token_file = "~/.local/share/whatdvd/token"
 
 # 允许在界面中浏览和处理的目录，界面无法访问这些目录以外的文件
 roots = ["~/downloads"]

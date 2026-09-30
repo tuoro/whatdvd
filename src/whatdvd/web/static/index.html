@@ -22,6 +22,7 @@
         <span>访问 token</span>
         <input id="login-token" type="password" autocomplete="current-password" placeholder="启动时设置或打印的 token" required>
       </label>
+      <p class="login-hint">token 在第一次启动时生成并保存。在服务器上运行 <code>whatdvd token</code> 查看；Docker 部署运行 <code>docker exec whatdvd whatdvd token</code>。</p>
       <p id="login-error" class="form-error" hidden></p>
       <button type="submit" class="btn light block">登录</button>
     </form>

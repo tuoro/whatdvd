@@ -1,7 +1,9 @@
 # 容器内使用的配置。路径都是容器内路径，对应 docker-compose.yml 中的挂载。
-# token 用环境变量 WHATDVD_TOKEN 设置；不设置则每次启动随机生成，用 docker logs whatdvd 查看登录链接。
+# 登录 token：第一次启动时自动生成，保存在输出卷的 .whatdvd/token 中，重启不变。
+# 查看：docker exec whatdvd whatdvd token。想自己指定，可以设置环境变量 WHATDVD_TOKEN。
 
 port = 26873
+token_file = "/output/.whatdvd/token"
 roots = ["/media"]
 output_dir = "/output"
 # ISO 解包会临时写入约 1 GB 的 VOB，放在输出卷里，避免占用容器的可写层或内存
