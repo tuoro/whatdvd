@@ -4,20 +4,23 @@ import pytest
 
 from conftest import FakeRunner, ok
 from whatdvd.runner import CommandResult
-from whatdvd.screenshots import capture, compress, format_timestamp, step_seconds, timestamps
+from whatdvd.screenshots import capture, compress, format_timestamp, timestamps, usable_range
 
 
 @pytest.mark.parametrize(
-    ("duration", "step"),
-    [(0, 21), (599, 21), (600, 71), (1499, 71), (1500, 121), (3599, 121), (3600, 331), (9000, 331)],
+    ("duration", "count", "expected"),
+    [
+        # 5% 起，间隔 (90% − 5%) ÷ 张数，同 Upload-Assistant
+        (1500, 11, [75 + 115 * i for i in range(11)]),  # 25 分钟的 VOB：1:15 到 20:25
+        (1800, 3, [90, 600, 1110]),
+        (70, 5, [3, 15, 27, 39, 51]),
+        (1800, 1, [90]),
+        (0, 2, [0, 0]),
+    ],
 )
-def test_step_buckets(duration: int, step: int) -> None:
-    assert step_seconds(duration) == step
-
-
-def test_timestamps_start_at_one_step() -> None:
-    assert timestamps(1800, 3) == [121, 242, 363]
-    assert timestamps(1800, 10)[-1] == 1210
+def test_timestamps_spread_over_5_to_90_percent(duration: int, count: int, expected: list[int]) -> None:
+    assert timestamps(duration, count) == expected
+    assert all(at <= usable_range(duration)[1] for at in timestamps(duration, count))
 
 
 @pytest.mark.parametrize(("seconds", "text"), [(21, "00:00:21"), (3310, "00:55:10"), (86400 + 5, "00:00:05")])

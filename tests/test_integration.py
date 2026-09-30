@@ -97,13 +97,14 @@ def test_scan_minfo_aspect(movie: Path, capsys: pytest.CaptureFixture[str]) -> N
 
 def test_run(movie: Path, tmp_path: Path, fake_pixhost: type[FakePixhost]) -> None:
     output = tmp_path / "out"
-    # 盘 1 的 VOB 约 70 秒，间隔 21 秒：第 1–3 张成功，第 4 张（84 秒）超出时长而失败
-    assert cli.main(["run", str(movie), "-n", "4", "-o", str(output)]) == 1
+    assert cli.main(["run", str(movie), "-n", "4", "-o", str(output)]) == 0
 
+    # 盘 1 的 VOB 70 秒：5 张（多截 1 张）取在 3 / 15 / 27 / 39 / 51 秒，删掉最小的一张后保留 4 张
     disc1 = "Disc.1.VTS_02_1.VOB"
-    for index in (1, 2, 3):
+    for index in (1, 2, 3, 4):
         assert png_size(output / f"{disc1}.scr{index}.png") == (1024, 576)
-    assert not (output / f"{disc1}.scr4.png").exists()
+    assert not (output / f"{disc1}.scr5.png").exists()
+    assert not [p for p in output.iterdir() if p.name.startswith(".whatdvd-")]  # 临时目录已清理
 
     assert png_size(output / "Disc.2.VTS_01_1.VOB.scr1.png") == (720, 540)
 
@@ -116,11 +117,12 @@ def test_run(movie: Path, tmp_path: Path, fake_pixhost: type[FakePixhost]) -> No
     ]
     assert str(movie.parent) not in report
 
-    # 成功的 4 张截图都上传了，截图失败不影响生成发布说明
-    assert fake_pixhost.uploaded == [f"{disc1}.scr{i}.png" for i in (1, 2, 3)] + ["Disc.2.VTS_01_1.VOB.scr1.png"]
+    assert fake_pixhost.uploaded == [f"{disc1}.scr{i}.png" for i in (1, 2, 3, 4)] + [
+        f"Disc.2.VTS_01_1.VOB.scr{i}.png" for i in (1, 2, 3, 4)
+    ]
     post = (output / "Sample.Movie.2001.post.txt").read_text(encoding="utf-8")
     assert post.startswith("[b]Disc 1[/b]\n[quote]\nGeneral\n")
-    assert f"[img]https://img1.pixhost.to/images/1/{disc1}.scr3.png[/img]" in post
+    assert f"[img]https://img1.pixhost.to/images/1/{disc1}.scr4.png[/img]" in post
     assert "[b]Disc 2[/b]" in post
 
 

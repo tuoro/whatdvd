@@ -14,13 +14,13 @@ from .naming import mediainfo_name, screenshot_name
 from .probe import VideoInfo, probe_duration, probe_video
 from .resolution import screenshot_size
 from .runner import Runner
-from .screenshots import capture, compress, format_timestamp, timestamps
+from .screenshots import capture, compress, format_timestamp, timestamps, usable_range
 
 Progress = Callable[[str, bool], None]
 """日志回调：第二个参数为 True 时算作完成一步（用于进度条）。"""
 
 # 剔除黑屏，同 Upload-Assistant：多截一张，删掉体积最小的；
-# 不超过 SMALL_BYTES 的视为黑屏或过渡画面，在随机时间点重截，最多 RETAKE_ATTEMPTS 次，超过 RETAKE_OK_BYTES 即可。
+# 不超过 SMALL_BYTES 的视为黑屏或过渡画面，在 5%–90% 内的随机时间点重截，最多 RETAKE_ATTEMPTS 次，超过 RETAKE_OK_BYTES 即可。
 SMALL_BYTES = 120_000
 RETAKE_OK_BYTES = 75_000
 RETAKE_ATTEMPTS = 3
@@ -93,7 +93,7 @@ def generate(
     dark_filter: bool = True,
     rng: random.Random | None = None,
 ) -> DiscOutput:
-    """取点同 jietu；dark_filter 时多截一张并剔除黑屏（同 Upload-Assistant）。"""
+    """取点同 Upload-Assistant；dark_filter 时多截一张并剔除黑屏（同 Upload-Assistant）。"""
     disc = analysis.disc
     output_dir.mkdir(parents=True, exist_ok=True)
     use_nconvert = runner.which("nconvert") is not None
@@ -153,7 +153,7 @@ def _retake_if_small(
         return take
     progress(f"{format_timestamp(take.at)} 的截图只有 {_kib(take.size)}，可能是黑屏，换时间点重截", False)
     for attempt in range(1, RETAKE_ATTEMPTS + 1):
-        at = rng.randint(0, max(analysis.duration - 2, 0))
+        at = rng.randint(*usable_range(analysis.duration))
         path = work / f"retake-{take.at}-{attempt}.png"
         if not capture(runner, analysis.disc.vob, at, analysis.size, path):
             progress(f"  重截 {attempt}/{RETAKE_ATTEMPTS}（{format_timestamp(at)}）失败", False)

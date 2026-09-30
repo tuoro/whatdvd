@@ -721,7 +721,7 @@ function showSettings() {
       row("输出目录", c.output_dir),
       row("ISO 临时目录", c.temp_dir || "系统临时目录"),
       row("同时运行的任务", String(c.max_jobs)),
-      row("每盘截图", `${c.screenshot_count} 张（按 jietu 规则取点，主片按 IFO 时长选）`),
+      row("每盘截图", `${c.screenshot_count} 张（在 VOB 时长的 5%–90% 均匀取点，主片按 IFO 时长选）`),
       row("比例修正", ASPECT_LABELS[c.aspect] || c.aspect),
       row("剔除黑屏", c.dark_filter ? "开：多截一张删掉最小的，小于 120 KB 的换时间点重截" : "关"),
       row("图床", `Pixhost（${c.pixhost_domain}）${c.proxy ? "，经代理" : ""}`),

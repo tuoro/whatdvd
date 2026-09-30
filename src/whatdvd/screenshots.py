@@ -1,4 +1,4 @@
-"""截图，取点和命令同 jietu。画面除比例换算外不做任何处理。"""
+"""截图：取点同 Upload-Assistant（时长的 5%–90% 均匀分布），命令同 jietu。画面除比例换算外不做任何处理。"""
 
 from __future__ import annotations
 
@@ -7,21 +7,21 @@ from pathlib import Path
 from .runner import Runner
 
 
-def step_seconds(duration: int) -> int:
-    """按时长分档的取点间隔（秒）。"""
-    if duration >= 3600:
-        return 331
-    if duration >= 1500:
-        return 121
-    if duration >= 600:
-        return 71
-    return 21
+# 取点范围同 Upload-Assistant：避开开头 5%（片头 logo）和最后 10%（片尾字幕）
+START_RATIO = 0.05
+END_RATIO = 0.90
+
+
+def usable_range(duration: int) -> tuple[int, int]:
+    """可取点的范围（秒）：时长的 5%–90%。"""
+    return int(duration * START_RATIO), int(duration * END_RATIO)
 
 
 def timestamps(duration: int, count: int) -> list[int]:
-    """第 k 张截图取在 k × 间隔 秒处，k 从 1 开始。"""
-    step = step_seconds(duration)
-    return [step * k for k in range(1, count + 1)]
+    """同 Upload-Assistant：从 5% 处开始，每隔 (90% − 5%) ÷ 张数 取一张，最后一张落在 90% 之前。"""
+    start, end = usable_range(duration)
+    interval = (end - start) // count if count > 1 else end - start
+    return [start + i * interval for i in range(count)]
 
 
 def format_timestamp(seconds: int) -> str:

@@ -2,7 +2,7 @@
 
 DVD 发种助手：把 DVD（VIDEO_TS 文件夹或 ISO）整理成发布所需的素材，包括截图、MediaInfo、种子和发布说明。发布到站点由用户手动完成。
 
-截图、MediaInfo 和做种的规则以 [Aniverse/inexistence](https://github.com/Aniverse/inexistence) 的 `jietu` 和 `zuozhong` 脚本为准；主片选择、截图尺寸和剔除黑屏参考 [Upload-Assistant](https://github.com/Audionut/Upload-Assistant)。本项目为独立实现，不包含它们的代码。
+截图、MediaInfo 和做种的规则以 [Aniverse/inexistence](https://github.com/Aniverse/inexistence) 的 `jietu` 和 `zuozhong` 脚本为准；主片选择、截图时间点、截图尺寸和剔除黑屏参考 [Upload-Assistant](https://github.com/Audionut/Upload-Assistant)。本项目为独立实现，不包含它们的代码。
 
 ## 当前进度
 
@@ -105,7 +105,7 @@ journalctl --user -u whatdvd -f                          # 查看日志
 | 假标题 | 本项目额外加的：IFO 时长配上该组 VOB（不含 `_0`）总大小，平均码率低于 0.5 Mbps 的组视为假标题跳过（复制保护盘常见），日志中会列出 |
 | IFO 读不出时长时 | 退回 jietu 的规则：盘内体积最大的文件作 VOB，最大的 `.IFO` 作 IFO |
 | MediaInfo 输出 | 一个文件，VOB 在前、IFO 在后；在输入路径的上级目录用相对路径运行 mediainfo，输出不做任何修改；ISO 显示为 `<ISO 名>/VIDEO_TS/…` |
-| 截图时间点 | 第 k 张取在 k × 间隔 秒；间隔按 VOB 时长分档：≥ 3600 秒 331，≥ 1500 秒 121，≥ 600 秒 71，否则 21 |
+| 截图时间点 | 同 Upload-Assistant：在选中 VOB 时长的 5%–90% 之间均匀取点（从 5% 起，每隔 85% ÷ 张数 一张），避开片头和片尾字幕 |
 | 截图尺寸 | 默认同 Upload-Assistant（`aspect = "ua"`）：只放大不缩小，PAR ≥ 1 时宽 × PAR，PAR < 1 时高 = 宽 ÷ DAR，四舍五入后奇数加 1。PAL 16:9 → 1024×576，PAL 4:3 → 768×576，NTSC 16:9 → 854×480，NTSC 4:3 → 720×540。也可设为 `"minfo"`（按 DAR，高度不变，NTSC 4:3 → 640×480）或 `"jietu"` |
 | 剔除黑屏 | 同 Upload-Assistant：多截一张，删掉体积最小的；不超过 120 KB 的视为黑屏，在随机时间点重截，最多 3 次，超过 75 KB 即可，都不理想时保留原图。`--no-dark-filter` 或 `dark_filter = false` 关闭 |
 | 画面处理 | 除尺寸换算外不做任何处理 |
