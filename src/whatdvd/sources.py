@@ -49,4 +49,4 @@ def open_disc(runner: Runner, source: Path, input_path: Path, temp_root: Path | 
         with open_iso(runner, source, temp_root) as disc:
             yield disc
     else:
-        yield scan_disc(source, input_path.absolute().parent)
+        yield scan_disc(runner, source, input_path.absolute().parent)

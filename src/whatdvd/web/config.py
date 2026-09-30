@@ -41,7 +41,8 @@ class ServerConfig:
     max_jobs: int = 1
     temp_dir: Path | None = None
     screenshot_count: int = 10
-    aspect: str = "minfo"
+    aspect: str = "ua"
+    dark_filter: bool = True
     pixhost_domain: str = PIXHOST_DOMAINS[0]
     proxy: str | None = None
     announces: tuple[str, ...] = ()
@@ -61,6 +62,7 @@ _SCHEMA: dict[tuple[str, str], type | tuple[type, ...]] = {
     ("", "max_jobs"): int,
     ("screenshots", "count"): int,
     ("screenshots", "aspect"): str,
+    ("screenshots", "dark_filter"): bool,
     ("pixhost", "domain"): str,
     ("pixhost", "proxy"): str,
     ("torrent", "announces"): list,
@@ -186,7 +188,7 @@ def load_config(
 
     aspect = flat.get(("screenshots", "aspect"), ASPECT_MODES[0])
     if aspect not in ASPECT_MODES:
-        raise ConfigError(f"screenshots.aspect 只能是 {' 或 '.join(ASPECT_MODES)}")
+        raise ConfigError(f"screenshots.aspect 只能是 {'、'.join(ASPECT_MODES)}")
 
     domain = flat.get(("pixhost", "domain"), PIXHOST_DOMAINS[0])
     if domain not in PIXHOST_DOMAINS:
@@ -218,6 +220,7 @@ def load_config(
         temp_dir=_expand(temp_dir) if temp_dir else None,
         screenshot_count=count,
         aspect=aspect,
+        dark_filter=flat.get(("screenshots", "dark_filter"), True),
         pixhost_domain=domain,
         proxy=flat.get(("pixhost", "proxy")) or None,
         announces=tuple(a.strip() for a in announces),

@@ -24,9 +24,12 @@ max_jobs = 1
 
 [screenshots]
 count = 10
-# 截图比例修正："minfo"（按 DAR，高度不变，例如 NTSC 4:3 → 640x480）
+# 截图比例修正："ua"（同 Upload-Assistant，只放大不缩小，例如 NTSC 4:3 → 720x540，NTSC 16:9 → 854x480）
+#            "minfo"（按 DAR，高度不变，例如 NTSC 4:3 → 640x480）
 #            或 "jietu"（按 PAR，只放大不缩小，例如 NTSC 4:3 → 720x540）
-aspect = "minfo"
+aspect = "ua"
+# 剔除黑屏（同 Upload-Assistant）：多截一张删掉体积最小的，小于 120 KB 的换时间点重截
+dark_filter = true
 
 [pixhost]
 domain = "pixhost.to"   # 或备用域名 pixhost.cc

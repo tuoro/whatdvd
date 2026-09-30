@@ -721,14 +721,21 @@ function showSettings() {
       row("输出目录", c.output_dir),
       row("ISO 临时目录", c.temp_dir || "系统临时目录"),
       row("同时运行的任务", String(c.max_jobs)),
-      row("每盘截图", `${c.screenshot_count} 张（按 jietu 规则取点）`),
-      row("比例修正", c.aspect === "jietu" ? "jietu：按 PAR，只放大不缩小" : "minfo：按 DAR，高度不变"),
+      row("每盘截图", `${c.screenshot_count} 张（按 jietu 规则取点，主片按 IFO 时长选）`),
+      row("比例修正", ASPECT_LABELS[c.aspect] || c.aspect),
+      row("剔除黑屏", c.dark_filter ? "开：多截一张删掉最小的，小于 120 KB 的换时间点重截" : "关"),
       row("图床", `Pixhost（${c.pixhost_domain}）${c.proxy ? "，经代理" : ""}`),
       row("默认 Tracker", c.announces.join("\n") || "无"),
       row("默认分块", `${pieceLabel(c.piece_length)}（2^${c.piece_length}）`),
       row("发布说明模板", c.custom_template ? "自定义模板" : "默认 BBCode"),
       row("配置文件", "~/.config/whatdvd/config.toml，或启动时用 -c 指定"))));
 }
+
+const ASPECT_LABELS = {
+  ua: "ua：同 Upload-Assistant，只放大不缩小",
+  minfo: "minfo：按 DAR，高度不变",
+  jietu: "jietu：按 PAR，只放大不缩小",
+};
 
 function showEmpty() {
   state.selected = null;

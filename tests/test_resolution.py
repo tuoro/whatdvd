@@ -1,6 +1,6 @@
 import pytest
 
-from whatdvd.resolution import display_size, display_size_minfo, screenshot_size
+from whatdvd.resolution import display_size, display_size_minfo, display_size_ua, screenshot_size
 
 
 @pytest.mark.parametrize(
@@ -46,7 +46,28 @@ def test_display_size_matches_minfo(
     assert display_size_minfo(width, height, dar, par) == expected
 
 
+@pytest.mark.parametrize(
+    ("width", "height", "par", "dar", "expected"),
+    [
+        (720, 576, 1.422, 1.778, (1024, 576)),  # PAL 16:9：1023.84 四舍五入
+        (720, 576, 1.067, 1.333, (768, 576)),  # PAL 4:3
+        (720, 480, 1.185, 1.778, (854, 480)),  # NTSC 16:9：853 为奇数，加 1
+        (720, 480, 0.889, 1.333, (720, 540)),  # NTSC 4:3：高度放大到 720 ÷ 1.333
+        (720, 480, 0.889, None, (720, 540)),  # 没有 DAR 时按 高 ÷ PAR
+        (704, 480, 0.909, 1.333, (704, 528)),
+        (720, 576, 1.0, 1.25, (720, 576)),  # PAR 为 1 不缩放
+        (352, 288, 1.455, 1.778, (512, 288)),  # 半 D1
+    ],
+)
+def test_display_size_matches_upload_assistant(
+    width: int, height: int, par: float, dar: float | None, expected: tuple[int, int]
+) -> None:
+    assert display_size_ua(width, height, par, dar) == expected
+
+
 def test_screenshot_size_modes() -> None:
+    assert screenshot_size(720, 480, 0.889, 1.333, "ua") == (720, 540)
+    assert screenshot_size(720, 480, 1.185, 1.778, "ua") == (854, 480)
     assert screenshot_size(720, 480, 0.889, 1.333, "minfo") == (640, 480)
     assert screenshot_size(720, 480, 0.889, 1.333, "jietu") == (720, 540)
     with pytest.raises(ValueError):

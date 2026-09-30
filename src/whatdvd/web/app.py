@@ -231,6 +231,7 @@ def create_app(
             "roots": [str(root) for root in config.roots],
             "screenshot_count": config.screenshot_count,
             "aspect": config.aspect,
+            "dark_filter": config.dark_filter,
             "pixhost_domain": config.pixhost_domain,
             "announces": list(config.announces),
             "piece_length": config.piece_length,
@@ -294,6 +295,7 @@ def create_app(
             upload=job.params["upload"],
             template=config.template,
             aspect=config.aspect,
+            dark_filter=config.dark_filter,
         )
         return _serialize_run(run(runner, job.path, options, reporter, host_factory))
 

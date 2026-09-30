@@ -18,7 +18,7 @@ from .workflow import RunOptions, WorkflowError, check_tools, format_bytes, outp
 __all__ = ["format_bytes", "main", "output_title"]
 
 DEFAULT_OUTPUT = Path("whatdvd-output")
-ASPECT_HELP = "截图比例修正：minfo（默认，按 DAR，高度不变）或 jietu（按 PAR，只放大不缩小）"
+ASPECT_HELP = "截图比例修正：ua（默认，同 Upload-Assistant，只放大不缩小）、minfo（按 DAR，高度不变）或 jietu（按 PAR，只放大不缩小）"
 
 
 class ConsoleReporter:
@@ -66,6 +66,10 @@ def _parser() -> argparse.ArgumentParser:
     run_cmd.add_argument("--proxy", help="上传图床用的 HTTP 代理，例如 http://127.0.0.1:7890")
     run_cmd.add_argument("--template", type=Path, help="发布说明模板文件，可用 $name、$mediainfo、$screenshots")
     run_cmd.add_argument("--aspect", choices=ASPECT_MODES, default=ASPECT_MODES[0], help=ASPECT_HELP)
+    run_cmd.add_argument(
+        "--no-dark-filter", action="store_true",
+        help="不剔除黑屏（默认多截一张删掉体积最小的，小于 120 KB 的换时间点重截）",
+    )
 
     torrent = commands.add_parser("torrent", help="用 mktorrent 生成 private 种子")
     torrent.add_argument("path", type=Path, help="要做种的文件夹或 ISO")
@@ -103,6 +107,7 @@ def _cmd_media(args: argparse.Namespace, runner: Runner) -> int:
         upload=is_run and not args.no_upload,
         template=template,
         aspect=args.aspect,
+        dark_filter=not (is_run and args.no_dark_filter),
     )
     try:
         result = run(

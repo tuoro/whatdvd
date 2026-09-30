@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from .dvd import ScanError
+from .dvd import Disc, ScanError
 from .naming import clean_title
 from .pipeline import Analysis, DiscOutput, analyze, generate
 from .post import DEFAULT_TEMPLATE, PostDisc, render_post
@@ -95,8 +95,10 @@ class RunOptions:
     """False 时只识别，不生成截图和 MediaInfo（scan 命令）。"""
     upload: bool = True
     template: str = DEFAULT_TEMPLATE
-    aspect: str = "minfo"
-    """截图比例修正方式：minfo 或 jietu。"""
+    aspect: str = "ua"
+    """截图比例修正方式：ua、minfo 或 jietu。"""
+    dark_filter: bool = True
+    """多截一张并剔除黑屏（同 Upload-Assistant）。"""
 
 
 class ClosableHost(ImageHost, Protocol):
@@ -106,12 +108,24 @@ class ClosableHost(ImageHost, Protocol):
 HostFactory = Callable[[], ClosableHost]
 
 
+def format_duration(seconds: float) -> str:
+    total = int(seconds)
+    return f"{total // 3600}:{total % 3600 // 60:02d}:{total % 60:02d}"
+
+
+def main_title(disc: Disc) -> str:
+    if disc.title_set is None or disc.title_duration is None:
+        return "IFO 中读不出时长，按盘内最大的文件选取"
+    return f"VTS_{disc.title_set}（IFO 时长 {format_duration(disc.title_duration)}，按时长选出）"
+
+
 def describe(source: Path, analysis: Analysis) -> list[str]:
     disc = analysis.disc
     video = analysis.video
     return [
         f"[{disc.name}]",
         f"  来源：{source}",
+        f"  主片：{main_title(disc)}",
         f"  VOB：{disc.vob.name}（{format_bytes(disc.vob.stat().st_size)}）",
         f"  IFO：{disc.ifo.name if disc.ifo else '无'}",
         f"  容量：{disc.media_type}，共 {format_bytes(disc.total_bytes)}",
@@ -125,21 +139,23 @@ def _process_discs(runner: Runner, path: Path, options: RunOptions, reporter: Re
     sources = find_sources(path)
     if any(is_iso(source) for source in sources):
         check_tools(runner, ["7z"])
-    per_disc = options.count + 1 if options.generate else 1
+    # 截图（剔除黑屏时多一张）+ MediaInfo，上传每张一步
+    per_disc = options.count + (2 if options.dark_filter else 1) if options.generate else 1
     if options.generate and options.upload:
         per_disc += options.count
     steps = _Steps(reporter, len(sources) * per_disc)
 
-    def step(message: str) -> None:
+    def step(message: str, tick: bool) -> None:
         reporter.info(f"  {message}")
-        steps.tick()
+        if tick:
+            steps.tick()
 
     results: list[DiscResult] = []
     for source in sources:
         result = DiscResult(source=source, label=source.name if is_iso(source) else source.parent.name)
         results.append(result)
         if is_iso(source):
-            reporter.info(f"正在从 {source.name} 解包选中的 VOB 和 IFO，文件大时需要几分钟…")
+            reporter.info(f"正在从 {source.name} 解包 IFO 和选中的 VOB，文件大时需要几分钟…")
         try:
             with open_disc(runner, source, path, options.temp_dir) as disc:
                 result.analysis = analyze(runner, disc, options.aspect)
@@ -154,6 +170,7 @@ def _process_discs(runner: Runner, path: Path, options: RunOptions, reporter: Re
                         count=options.count,
                         output_dir=options.output_dir,
                         progress=step,
+                        dark_filter=options.dark_filter,
                     )
                     if result.output.failed:
                         reporter.error(f"  有 {len(result.output.failed)} 张截图失败。")

@@ -76,15 +76,23 @@ def test_parse_listing_without_separator() -> None:
         parse_listing("Error: not an archive")
 
 
-def test_select_files_same_rules_as_folder() -> None:
-    vob, ifo = select_files(parse_listing(LISTING))
-    assert vob.path == "VIDEO_TS/VTS_02_1.VOB"
-    assert ifo is not None and ifo.path == "VIDEO_TS/VTS_01_0.IFO"  # 两个 IFO 同大小，按名称取第一个
+def test_select_files_by_ifo_duration() -> None:
+    selection = select_files(parse_listing(LISTING), {"01": 8.0, "02": 70.0})
+    assert selection.vob.path == "VIDEO_TS/VTS_02_1.VOB"
+    assert selection.ifo is not None and selection.ifo.path == "VIDEO_TS/VTS_02_0.IFO"
+    assert selection.title_set == "02"
+
+
+def test_select_files_without_durations_uses_jietu_rules() -> None:
+    selection = select_files(parse_listing(LISTING), {})
+    assert selection.vob.path == "VIDEO_TS/VTS_02_1.VOB"
+    # 两个 IFO 同大小，按名称取第一个：这是 jietu 规则的已知局限
+    assert selection.ifo is not None and selection.ifo.path == "VIDEO_TS/VTS_01_0.IFO"
 
 
 def test_select_files_ignores_files_outside_video_ts() -> None:
     entries = [IsoEntry("BONUS/big.VOB", 10**9), IsoEntry("VIDEO_TS/VTS_01_1.VOB", 10)]
-    assert select_files(entries)[0].path == "VIDEO_TS/VTS_01_1.VOB"
+    assert select_files(entries, {}).vob.path == "VIDEO_TS/VTS_01_1.VOB"
 
 
 @pytest.mark.parametrize(
@@ -93,10 +101,16 @@ def test_select_files_ignores_files_outside_video_ts() -> None:
 )
 def test_select_files_errors(entries: list[IsoEntry]) -> None:
     with pytest.raises(ScanError):
-        select_files(entries)
+        select_files(entries, {})
+
+
+IFO_DURATIONS = {"VTS_01_0.IFO": "8.000", "VTS_02_0.IFO": "70.000"}
 
 
 def _fake_7z(argv: tuple[str, ...]) -> CommandResult:
+    if argv[0] == "mediainfo":
+        duration = IFO_DURATIONS[Path(argv[-1]).name]
+        return ok(argv, f'{{"media": {{"track": [{{"@type": "General"}}, {{"Duration": "{duration}"}}]}}}}')
     if argv[1] == "l":
         return ok(argv, LISTING)
     target = Path(next(a for a in argv if a.startswith("-o"))[2:])
@@ -110,12 +124,17 @@ def test_open_iso_extracts_only_selected_files_and_cleans_up(tmp_path: Path) -> 
     iso = make_file(tmp_path / "Disc 1.iso", 20_854_784)
     runner = FakeRunner(_fake_7z)
     with open_iso(runner, iso, temp_root=tmp_path) as disc:
-        extract = runner.calls[1]
-        assert extract[:5] == ("7z", "x", "-y", "-bso0", "-bsp0")
-        assert extract[-2:] == ("VIDEO_TS/VTS_02_1.VOB", "VIDEO_TS/VTS_01_0.IFO")
+        # 先解出各组 IFO 读时长，再只解正片的 VOB（IFO 已经解出，不重复解）
+        ifos, vob = runner.calls[1], runner.calls[4]
+        assert ifos[:5] == ("7z", "x", "-y", "-bso0", "-bsp0")
+        assert ifos[-2:] == ("VIDEO_TS/VTS_01_0.IFO", "VIDEO_TS/VTS_02_0.IFO")
+        assert [call[0] for call in runner.calls[2:4]] == ["mediainfo", "mediainfo"]
+        assert vob[-2:] == (str(iso), "VIDEO_TS/VTS_02_1.VOB")
+        assert len(runner.calls) == 5
         assert disc.name == "Disc 1"
+        assert disc.title_set == "02"
         assert disc.vob.is_file() and disc.vob.name == "VTS_02_1.VOB"
-        assert disc.ifo is not None and disc.ifo.name == "VTS_01_0.IFO"
+        assert disc.ifo is not None and disc.ifo.name == "VTS_02_0.IFO"
         assert disc.total_bytes == 20_854_784
         assert disc.vob.relative_to(disc.mediainfo_root).as_posix() == "Disc 1/VIDEO_TS/VTS_02_1.VOB"
         temp = disc.mediainfo_root
@@ -124,7 +143,7 @@ def test_open_iso_extracts_only_selected_files_and_cleans_up(tmp_path: Path) -> 
 
 def test_open_iso_reports_missing_extraction(tmp_path: Path) -> None:
     iso = make_file(tmp_path / "Disc 1.iso", 1)
-    runner = FakeRunner(lambda argv: ok(argv, LISTING if argv[1] == "l" else ""))
+    runner = FakeRunner(lambda argv: ok(argv, LISTING if argv[1:2] == ("l",) else ""))
     with pytest.raises(ScanError, match="没有解出"), open_iso(runner, iso, temp_root=tmp_path):
         pass
 

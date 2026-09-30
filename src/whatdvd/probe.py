@@ -1,7 +1,8 @@
-"""从 VOB 读取截图需要的视频参数和时长。"""
+"""从 VOB 读取截图需要的视频参数和时长，从 IFO 读取标题时长。"""
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -63,3 +64,16 @@ def probe_duration(runner: Runner, vob: Path) -> int:
         return int(float(output))
     except ValueError:
         raise ProbeError(f"ffprobe 没有给出有效时长：{vob.name}（输出：{output!r}）") from None
+
+
+def ifo_duration(runner: Runner, ifo: Path) -> float | None:
+    """IFO 的标题时长（秒），同 Upload-Assistant：取 MediaInfo JSON 中 General 之后第一条轨道的 Duration。
+
+    读不出时返回 None。
+    """
+    result = runner.run(["mediainfo", "--Output=JSON", ifo], check=False)
+    try:
+        tracks = json.loads(result.stdout)["media"]["track"]
+        return float(tracks[1]["Duration"])
+    except (ValueError, KeyError, IndexError, TypeError):
+        return None

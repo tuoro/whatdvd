@@ -1,4 +1,4 @@
-"""ISO 按需解包：用 7z 列出目录，按 jietu 的规则选文件，只解包选中的 VOB 和 IFO。
+"""ISO 按需解包：用 7z 列出目录，先解出各组的 VTS_xx_0.IFO 读时长选主片，再只解包选中的 VOB。
 
 不 mount、不整盘解包，也不需要 root。
 """
@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
-from .dvd import Disc, ScanError, is_ifo, is_vob, pick_largest
+from .dvd import Disc, ScanError, Selection, is_title_ifo, select_title, title_durations
 from .runner import Runner
 
 
@@ -43,16 +43,20 @@ def parse_listing(text: str) -> list[IsoEntry]:
     return entries
 
 
-def select_files(entries: list[IsoEntry]) -> tuple[IsoEntry, IsoEntry | None]:
-    """与文件夹相同的规则：VIDEO_TS 中最大的文件作 VOB，最大的 IFO 作 IFO。"""
-    files = [e for e in entries if PurePosixPath(e.path).parent.name.upper() == "VIDEO_TS"]
-    vob = pick_largest(files, lambda e: e.size, lambda e: e.path)
-    if vob is None:
+def video_ts_files(entries: list[IsoEntry]) -> list[IsoEntry]:
+    return [e for e in entries if PurePosixPath(e.path).parent.name.upper() == "VIDEO_TS"]
+
+
+def entry_name(entry: IsoEntry) -> str:
+    return PurePosixPath(entry.path).name
+
+
+def select_files(entries: list[IsoEntry], durations: dict[str, float]) -> Selection[IsoEntry]:
+    """与文件夹相同的规则，只看 VIDEO_TS 中的文件。"""
+    files = video_ts_files(entries)
+    if not files:
         raise ScanError("ISO 中没有 VIDEO_TS 目录，或目录是空的")
-    if not is_vob(vob.path):
-        raise ScanError(f"VIDEO_TS 中最大的文件不是 VOB：{vob.path}")
-    ifo = pick_largest((e for e in files if is_ifo(e.path)), lambda e: e.size, lambda e: e.path)
-    return vob, ifo
+    return select_title(files, entry_name, lambda e: e.size, durations)
 
 
 def _extracted_path(target: Path, entry: IsoEntry) -> Path:
@@ -68,7 +72,8 @@ def open_iso(runner: Runner, iso: Path, temp_root: Path | None = None) -> Iterat
 
     MediaInfo 中的路径因此显示为 <ISO 名>/VIDEO_TS/…。
     """
-    vob, ifo = select_files(parse_listing(runner.run(["7z", "l", "-slt", iso]).stdout))
+    entries = parse_listing(runner.run(["7z", "l", "-slt", iso]).stdout)
+    title_ifos = [e for e in video_ts_files(entries) if is_title_ifo(entry_name(e))]
     name = iso.stem
     if temp_root is not None:
         temp_root.mkdir(parents=True, exist_ok=True)
@@ -76,17 +81,30 @@ def open_iso(runner: Runner, iso: Path, temp_root: Path | None = None) -> Iterat
         # 解析符号链接，保证解出的文件都在 temp 之下，MediaInfo 用相对路径。
         temp = Path(temp_dir).resolve()
         target = temp / name
-        wanted = [vob] if ifo is None else [vob, ifo]
-        paths = [_extracted_path(target, entry) for entry in wanted]
-        runner.run(["7z", "x", "-y", "-bso0", "-bsp0", f"-o{target}", iso, *(e.path for e in wanted)])
-        missing = [p for p in paths if not p.is_file()]
-        if missing:
-            raise ScanError(f"7z 没有解出：{'、'.join(p.name for p in missing)}")
+
+        def extract(wanted: list[IsoEntry]) -> list[Path]:
+            paths = [_extracted_path(target, entry) for entry in wanted]
+            todo = [e.path for e, p in zip(wanted, paths, strict=True) if not p.is_file()]
+            if todo:
+                runner.run(["7z", "x", "-y", "-bso0", "-bsp0", f"-o{target}", iso, *todo])
+            missing = [p for p in paths if not p.is_file()]
+            if missing:
+                raise ScanError(f"7z 没有解出：{'、'.join(p.name for p in missing)}")
+            return paths
+
+        # IFO 只有几十 KB，先全部解出读时长
+        ifo_paths = extract(title_ifos)
+        durations = title_durations(runner, zip(map(entry_name, title_ifos), ifo_paths, strict=True))
+        selection = select_files(entries, durations)
+        wanted = [selection.vob] if selection.ifo is None else [selection.vob, selection.ifo]
+        paths = extract(wanted)
         yield Disc(
             name=name,
             video_ts=paths[0].parent,
             vob=paths[0],
-            ifo=paths[1] if ifo is not None else None,
+            ifo=paths[1] if selection.ifo is not None else None,
             total_bytes=iso.stat().st_size,
             mediainfo_root=temp,
+            title_set=selection.title_set,
+            title_duration=selection.duration,
         )

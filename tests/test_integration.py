@@ -82,16 +82,17 @@ def test_scan(movie: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(["scan", str(movie)]) == 0
     out = capsys.readouterr().out
     assert "[Disc 1]" in out and "[Disc 2]" in out
-    assert "VOB：VTS_02_1.VOB" in out  # 正片不在 VTS_01，按最大文件选中
+    assert "主片：VTS_02（IFO 时长 0:01:10，按时长选出）" in out  # 正片不在 VTS_01
+    assert "VOB：VTS_02_1.VOB" in out
     assert "PAR 1.422，DAR 1.778 → 1024x576" in out
-    assert "PAR 0.889，DAR 1.333 → 640x480" in out  # 默认按 minfo：高度不变
+    assert "PAR 0.889，DAR 1.333 → 720x540" in out  # 默认同 Upload-Assistant：只放大不缩小
     assert "制式：PAL" in out and "制式：NTSC" in out
     assert "容量：DVD5" in out
 
 
-def test_scan_jietu_aspect(movie: Path, capsys: pytest.CaptureFixture[str]) -> None:
-    assert cli.main(["scan", str(movie), "--aspect", "jietu"]) == 0
-    assert "PAR 0.889，DAR 1.333 → 720x540" in capsys.readouterr().out
+def test_scan_minfo_aspect(movie: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    assert cli.main(["scan", str(movie), "--aspect", "minfo"]) == 0
+    assert "PAR 0.889，DAR 1.333 → 640x480" in capsys.readouterr().out
 
 
 def test_run(movie: Path, tmp_path: Path, fake_pixhost: type[FakePixhost]) -> None:
@@ -104,14 +105,14 @@ def test_run(movie: Path, tmp_path: Path, fake_pixhost: type[FakePixhost]) -> No
         assert png_size(output / f"{disc1}.scr{index}.png") == (1024, 576)
     assert not (output / f"{disc1}.scr4.png").exists()
 
-    assert png_size(output / "Disc.2.VTS_01_1.VOB.scr1.png") == (640, 480)
+    assert png_size(output / "Disc.2.VTS_01_1.VOB.scr1.png") == (720, 540)
 
     report = (output / f"{disc1}.mediainfo.txt").read_text(encoding="utf-8")
     names = [line.split(":", 1)[1].strip() for line in report.splitlines() if line.startswith("Complete name")]
-    # 两个 IFO 同为 12288 字节，按文件名取到 VTS_01_0.IFO：这是 jietu 规则的已知局限
+    # 主片按 IFO 时长选中 VTS_02，IFO 也是这一组的（jietu 规则会按文件名取到同大小的 VTS_01_0.IFO）
     assert names == [
         "Sample Movie (2001)/Disc 1/VIDEO_TS/VTS_02_1.VOB",
-        "Sample Movie (2001)/Disc 1/VIDEO_TS/VTS_01_0.IFO",
+        "Sample Movie (2001)/Disc 1/VIDEO_TS/VTS_02_0.IFO",
     ]
     assert str(movie.parent) not in report
 
