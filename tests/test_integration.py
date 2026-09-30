@@ -190,6 +190,7 @@ def test_web_run(movie: Path, tmp_path: Path) -> None:
                 break
             time.sleep(0.1)
         assert job["status"] == "done" and job["ok"] is True, job
+        assert job["progress"] == 1.0
         result = job["result"]
         disc = result["discs"][0]
         assert (disc["name"], disc["vob"], disc["size"]) == ("Disc 1", "VTS_02_1.VOB", [1024, 576])

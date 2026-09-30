@@ -26,6 +26,9 @@ class ConsoleReporter:
     def error(self, message: str) -> None:
         print(message, file=sys.stderr)
 
+    def progress(self, done: int, total: int) -> None:
+        pass  # 命令行逐行输出，已能看出进度
+
 
 def _positive_int(text: str) -> int:
     value = int(text)

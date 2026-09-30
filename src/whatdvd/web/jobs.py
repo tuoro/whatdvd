@@ -31,6 +31,8 @@ class Job:
     events: list[dict[str, str]] = field(default_factory=list)
     result: dict[str, Any] | None = None
     error: str | None = None
+    progress: float | None = None
+    """0–1；None 表示无法估计（例如做种时 mktorrent 不报告进度）。"""
     files: frozenset[str] = frozenset()
     """允许通过 API 下载的文件名（位于 output_dir 中）。"""
     _changed: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
@@ -41,6 +43,10 @@ class Job:
 
     def add_event(self, level: str, message: str) -> None:
         self.events.append({"level": level, "message": message})
+        self.touch()
+
+    def set_progress(self, value: float) -> None:
+        self.progress = max(0.0, min(1.0, value))
         self.touch()
 
     def touch(self) -> None:
@@ -55,6 +61,7 @@ class Job:
             "path": str(self.path),
             "params": self.params,
             "status": self.status,
+            "progress": self.progress,
             "ok": None if self.result is None else self.result.get("ok"),
             "error": self.error,
             "created_at": self.created_at,
@@ -77,6 +84,9 @@ class JobReporter:
 
     def error(self, message: str) -> None:
         self._loop.call_soon_threadsafe(self._job.add_event, "error", message)
+
+    def progress(self, done: int, total: int) -> None:
+        self._loop.call_soon_threadsafe(self._job.set_progress, done / total if total else 1.0)
 
 
 Worker = Callable[[Job, JobReporter], dict[str, Any]]
@@ -131,6 +141,7 @@ class JobManager:
                 job.files = frozenset(result.pop("files", []))
                 job.result = result
                 job.status = "done"
+                job.progress = 1.0
             job.finished_at = time.time()
             job.touch()
 

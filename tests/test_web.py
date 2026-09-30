@@ -235,3 +235,33 @@ def test_job_manager_limits_concurrency_and_records_failure(tmp_path: Path) -> N
     assert first.events[0] == {"level": "info", "message": "started"}
     assert second.status == "failed" and second.error == "boom"
     assert second.events[-1] == {"level": "error", "message": "boom"}
+
+
+# ---------- 来源摘要与进度 ----------
+
+
+def test_source_summary(authed: TestClient, media: Path) -> None:
+    make_file(media / "Movie A" / "VIDEO_TS" / "VTS_01_0.IFO", 5)
+    data = authed.get("/api/source", params={"path": str(media)}).json()
+    assert data["kind"] == "dir"
+    assert [(d["name"], d["kind"], d["media_type"]) for d in data["discs"]] == [
+        ("Movie A", "dvd", "DVD5"),
+        ("Movie B", "iso", "DVD5"),
+    ]
+    assert data["discs"][0]["bytes"] == 15
+    assert data["total_bytes"] == 25
+    empty = authed.get("/api/source", params={"path": str(media / "Plain")}).json()
+    assert empty["discs"] == [] and empty["total_bytes"] == 0
+    assert authed.get("/api/source", params={"path": "/etc"}).status_code == 403
+
+
+def test_config_includes_settings_fields(authed: TestClient) -> None:
+    data = authed.get("/api/config").json()
+    assert data["listen"] == "127.0.0.1:28090"
+    assert data["max_jobs"] == 1 and data["custom_template"] is False and data["proxy"] is False
+
+
+def test_finished_job_has_full_progress(authed: TestClient, media: Path) -> None:
+    body = {"kind": "torrent", "path": str(media / "Movie A"), "announces": [], "piece_length": 24}
+    job = wait_job(authed, authed.post("/api/jobs", json=body).json()["id"])
+    assert job["progress"] == 1.0

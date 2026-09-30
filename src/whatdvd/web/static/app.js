@@ -1,37 +1,49 @@
 "use strict";
 
-const $ = (id) => document.getElementById(id);
-const STORAGE_KEY = "whatdvd.browsePath";
-const KIND_LABEL = { dir: "目录", dvd: "DVD", iso: "ISO" };
-const JOB_KIND = { run: "截图与 MediaInfo", torrent: "做种" };
-const JOB_ICON = { run: "image", torrent: "peers" };
+// ---------- 常量与状态 ----------
 
-// 图标：固定的 SVG 片段（24×24，描边），只来自这里，不含任何外部输入
+const $ = (id) => document.getElementById(id);
+const KIND_LABEL = { dir: "目录", dvd: "DVD", iso: "ISO" };
+const JOB_LABEL = { run: "截图与 MediaInfo", torrent: "做种" };
+const JOB_SHORT = { run: "截图", torrent: "做种" };
+
+// 图标：固定的 SVG 片段，不含外部输入
 const ICONS = {
   folder: '<path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v7a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5z"/>',
   disc: '<circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.5"/><path d="M12 5.5a6.5 6.5 0 0 1 6.5 6.5"/>',
   iso: '<path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><circle cx="12" cy="14.5" r="3"/>',
-  back: '<path d="M15 18l-6-6 6-6"/>',
+  up: '<path d="M15 18l-6-6 6-6"/>',
   chev: '<path d="M9 6l6 6-6 6"/>',
-  logout: '<path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="M10 16l-4-4 4-4"/><path d="M6 12h10"/>',
-  copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/>',
-  check: '<path d="M5 12.5l4.5 4.5L19 7"/>',
-  download: '<path d="M12 4v11"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/>',
-  link: '<path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+  play: '<path d="M7 5l12 7-12 7z"/>',
   image: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.6"/><path d="M21 16l-5-5-8 8"/>',
   peers: '<circle cx="6" cy="12" r="2.5"/><circle cx="18" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M8.3 10.9l7.4-3.7M8.3 13.1l7.4 3.7"/>',
+  copy: '<rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h8"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7"/>',
+  down: '<path d="M12 4v11"/><path d="M7 10l5 5 5-5"/><path d="M5 20h14"/>',
+  link: '<path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+  next: '<path d="M5 12h14"/><path d="M13 6l6 6-6 6"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  logout: '<path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="M10 16l-4-4 4-4"/><path d="M6 12h10"/>',
   alert: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5"/><path d="M12 16.5h.01"/>',
-  info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5.5"/><path d="M12 7.5h.01"/>',
 };
 
 const state = {
-  config: null, path: null, parent: null, selected: null,
-  jobId: null, source: null, timer: null, actionTab: "run",
+  config: null,
+  listing: null,        // 侧栏当前目录的浏览结果
+  selected: null,       // 当前查看的来源路径
+  checked: new Set(),   // 勾选的路径（批量）
+  jobs: [],             // 任务摘要，新的在前
+  details: new Map(),   // 已完成任务的详情缓存
+  stream: null,
+  route: null,
+  opts: null,           // 表单选项，在各页面之间共享
+  pollTimer: null,
+  toastTimer: null,
 };
 
 class AuthError extends Error {}
 
-// ---------- 工具函数 ----------
+// ---------- 工具 ----------
 
 function setIcon(span, name) {
   span.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[name]}</svg>`;
@@ -39,7 +51,7 @@ function setIcon(span, name) {
 
 function icon(name) {
   const span = document.createElement("span");
-  span.className = "icon";
+  span.className = "ico";
   setIcon(span, name);
   return span;
 }
@@ -49,6 +61,7 @@ function h(tag, attrs = {}, ...children) {
   for (const [key, value] of Object.entries(attrs)) {
     if (value === null || value === undefined || value === false) continue;
     if (key === "class") el.className = value;
+    else if (key === "style") el.style.cssText = value;  // 通过 CSSOM 设置，不受 CSP 对 style 属性的限制
     else if (key.startsWith("on")) el.addEventListener(key.slice(2), value);
     else el.setAttribute(key, value === true ? "" : String(value));
   }
@@ -62,26 +75,26 @@ function h(tag, attrs = {}, ...children) {
 function formatBytes(size) {
   let value = size;
   for (const unit of ["B", "KiB", "MiB"]) {
-    if (value < 1024) return unit === "B" ? `${size} B` : `${value.toFixed(2)} ${unit}`;
+    if (value < 1024) return unit === "B" ? `${size} B` : `${value.toFixed(1)} ${unit}`;
     value /= 1024;
   }
   return `${value.toFixed(2)} GiB`;
 }
 
-function formatSeconds(seconds) {
+function timecode(seconds) {
   const s = seconds % 86400;
   const pad = (n) => String(n).padStart(2, "0");
   return `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}`;
 }
 
-function formatDuration(seconds) {
+function duration(seconds) {
   if (seconds < 60) return `${seconds} 秒`;
   const m = Math.floor(seconds / 60);
   return seconds % 60 ? `${m} 分 ${seconds % 60} 秒` : `${m} 分钟`;
 }
 
-function formatClock(timestamp) {
-  return new Date(timestamp * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+function clock(ts) {
+  return new Date(ts * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 }
 
 function basename(path) {
@@ -89,16 +102,24 @@ function basename(path) {
   return parts.length ? parts[parts.length - 1] : path;
 }
 
-function findRoot(path) {
-  return (state.config?.roots || []).find((root) => path === root || path.startsWith(`${root}/`)) || null;
+function parentOf(path) {
+  const index = path.lastIndexOf("/");
+  return index > 0 ? path.slice(0, index) : "/";
 }
 
-/** 以根目录名开头的相对路径，例如 downloads / Movie / Disc 1。 */
+function rootOf(path) {
+  return state.config.roots.find((root) => path === root || path.startsWith(`${root}/`)) || null;
+}
+
 function shortPath(path) {
-  const root = findRoot(path);
+  const root = rootOf(path);
   if (!root) return path;
-  const rest = path.slice(root.length).split("/").filter(Boolean);
-  return [basename(root), ...rest].join(" / ");
+  return [basename(root), ...path.slice(root.length).split("/").filter(Boolean)].join(" / ");
+}
+
+function pieceLabel(n) {
+  const bytes = 2 ** n;
+  return bytes >= 1024 ** 2 ? `${bytes / 1024 ** 2} MiB` : `${bytes / 1024} KiB`;
 }
 
 function formatDetail(detail) {
@@ -107,21 +128,12 @@ function formatDetail(detail) {
   return "";
 }
 
-function storageGet() {
-  try { return localStorage.getItem(STORAGE_KEY); } catch { return null; }
-}
-
-function storageSet(value) {
-  try {
-    if (value) localStorage.setItem(STORAGE_KEY, value);
-    else localStorage.removeItem(STORAGE_KEY);
-  } catch { /* 浏览器禁用了存储时忽略 */ }
-}
-
-function showError(id, message) {
-  const el = $(id);
+function toast(message) {
+  const el = $("toast");
   el.textContent = message;
-  el.hidden = !message;
+  el.hidden = false;
+  clearTimeout(state.toastTimer);
+  state.toastTimer = setTimeout(() => { el.hidden = true; }, 2200);
 }
 
 async function api(path, options = {}) {
@@ -138,7 +150,7 @@ async function api(path, options = {}) {
   }
   if (!response.ok) {
     let message = `请求失败（HTTP ${response.status}）`;
-    try { message = formatDetail((await response.json()).detail) || message; } catch { /* 非 JSON 响应 */ }
+    try { message = formatDetail((await response.json()).detail) || message; } catch { /* 非 JSON */ }
     throw new Error(message);
   }
   if (response.status === 204) return null;
@@ -163,37 +175,47 @@ async function writeClipboard(text) {
   }
 }
 
-/** 复制按钮：点击后短暂显示“已复制”。getText 可以是异步函数。 */
-function copyButton(label, getText, primary = false) {
-  const text = h("span", {}, label);
+function copyButton(label, getText, cls = "glass") {
   const glyph = icon("copy");
-  const button = h("button", { type: "button", class: `btn small${primary ? " primary" : ""}` }, glyph, text);
+  const text = h("span", {}, label);
+  const button = h("button", { type: "button", class: `btn small ${cls}` }, glyph, text);
   let timer = null;
   button.addEventListener("click", async () => {
     const ok = await writeClipboard(await getText());
     clearTimeout(timer);
     setIcon(glyph, ok ? "check" : "alert");
-    text.textContent = ok ? "已复制" : "复制失败，请手动选择";
-    button.classList.toggle("done", ok && !primary);
-    timer = setTimeout(() => {
-      setIcon(glyph, "copy");
-      text.textContent = label;
-      button.classList.remove("done");
-    }, 1800);
+    text.textContent = ok ? "已复制" : "复制失败";
+    timer = setTimeout(() => { setIcon(glyph, "copy"); text.textContent = label; }, 1800);
   });
   return button;
 }
 
 function notice(kind, message) {
-  return h("div", { class: `notice ${kind}`, role: kind === "bad" ? "alert" : null }, icon(kind === "info" ? "info" : "alert"), h("div", {}, message));
+  return h("div", { class: `notice ${kind}`, role: kind === "bad" ? "alert" : null }, icon("alert"), h("div", {}, message));
+}
+
+function statusOf(job) {
+  if (job.status === "done" && job.ok === false) return { cls: "warn", text: "完成，有问题" };
+  const pct = job.progress !== null && job.progress !== undefined ? ` ${Math.round(job.progress * 100)}%` : "";
+  const text = { queued: "排队中", running: `运行中${pct}`, done: "完成", failed: "失败" }[job.status] || job.status;
+  return { cls: job.status, text };
+}
+
+function progressBar(job) {
+  const status = statusOf(job);
+  const finished = job.status === "done" || job.status === "failed";
+  const indeterminate = job.status === "running" && (job.progress === null || job.progress === undefined);
+  const width = finished ? 100 : Math.round((job.progress || 0) * 100);
+  return h("div", { class: `bar ${status.cls}${indeterminate ? " indeterminate" : ""}`, role: "progressbar", "aria-valuenow": width, "aria-valuemin": 0, "aria-valuemax": 100 },
+    h("i", { style: `width:${width}%` }));
 }
 
 // ---------- 登录 ----------
 
 function showLogin() {
   closeStream();
-  clearInterval(state.timer);
-  state.timer = null;
+  clearTimeout(state.pollTimer);
+  state.pollTimer = null;
   $("app").hidden = true;
   $("login").hidden = false;
   $("login-token").focus();
@@ -201,14 +223,16 @@ function showLogin() {
 
 async function login(event) {
   event.preventDefault();
-  showError("login-error", "");
+  const error = $("login-error");
+  error.hidden = true;
   const response = await fetch("/api/login", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ token: $("login-token").value }),
   });
   if (!response.ok) {
-    showError("login-error", response.status === 401 ? "token 不正确。" : `登录失败（HTTP ${response.status}）`);
+    error.textContent = response.status === 401 ? "token 不正确。" : `登录失败（HTTP ${response.status}）`;
+    error.hidden = false;
     return;
   }
   $("login-token").value = "";
@@ -220,364 +244,530 @@ async function logout() {
   showLogin();
 }
 
-// ---------- 浏览 ----------
+// ---------- 侧栏：媒体库 ----------
 
-function renderCrumbs(path) {
-  const crumbs = [];
-  const multiRoot = state.config.roots.length > 1;
-  if (multiRoot || path === null) crumbs.push({ label: "全部目录", path: null });
-  if (path !== null) {
-    const root = findRoot(path);
-    crumbs.push({ label: basename(root), path: root });
-    let current = root;
-    for (const part of path.slice(root.length).split("/").filter(Boolean)) {
-      current = `${current}/${part}`;
-      crumbs.push({ label: part, path: current });
-    }
-  }
-  const nodes = [];
-  crumbs.forEach((crumb, index) => {
-    if (index > 0) nodes.push(h("span", { class: "sep", "aria-hidden": "true" }, "/"));
-    const last = index === crumbs.length - 1;
-    nodes.push(h("button", {
-      type: "button", title: crumb.path || "全部目录", "aria-current": last ? "page" : null,
-      onclick: () => browse(crumb.path),
-    }, crumb.label));
-  });
-  $("crumbs").replaceChildren(...nodes);
+async function loadListing(path) {
+  const data = await api(path ? `/api/browse?path=${encodeURIComponent(path)}` : "/api/browse");
+  if (!state.listing || state.listing.path !== data.path) state.checked.clear();
+  state.listing = data;
+  renderListing();
+  renderBatch();
 }
 
-async function browse(path) {
-  showError("browse-error", "");
-  let data;
-  try {
-    data = await api(path ? `/api/browse?path=${encodeURIComponent(path)}` : "/api/browse");
-  } catch (error) {
-    if (error instanceof AuthError) return;
-    if (path) {
-      storageSet(null);
-      await browse(state.config.roots.length === 1 ? state.config.roots[0] : null);
-      showError("browse-error", error.message);
-      return;
-    }
-    showError("browse-error", error.message);
-    return;
+function renderListing() {
+  const data = state.listing;
+  // 路径
+  const crumbs = [];
+  if (state.config.roots.length > 1 || data.path === null) {
+    crumbs.push(h("a", { href: "#/", "aria-current": data.path === null ? "page" : null }, "全部"));
   }
-  state.path = data.path;
-  state.parent = data.parent;
-  storageSet(data.path);
-  renderCrumbs(data.path);
-  if (data.path) select({ path: data.path, kind: data.kind || "dir" });
+  if (data.path !== null) {
+    const root = rootOf(data.path);
+    let current = root;
+    const parts = [basename(root), ...data.path.slice(root.length).split("/").filter(Boolean)];
+    parts.forEach((part, index) => {
+      if (index > 0) current = `${current}/${part}`;
+      if (crumbs.length) crumbs.push(h("span", { "aria-hidden": "true" }, "/"));
+      crumbs.push(h("a", { href: `#/browse/${encodeURIComponent(current)}`, "aria-current": index === parts.length - 1 ? "page" : null }, part));
+    });
+  }
+  $("crumbs").replaceChildren(...crumbs);
 
+  // 条目
   const items = [];
-  const atTop = data.path === null || (data.parent === null && state.config.roots.length === 1);
-  if (!atTop) {
-    items.push(h("li", {}, h("button", { type: "button", class: "entry back", onclick: () => browse(data.parent) },
-      icon("back"), h("span", { class: "name" }, "上一级"))));
+  const singleRootTop = state.config.roots.length === 1 && data.parent === null;
+  if (data.path !== null && !singleRootTop) {
+    const target = data.parent ? `#/browse/${encodeURIComponent(data.parent)}` : "#/";
+    items.push(h("li", { class: "entry up" }, h("span", { class: "spacer" }), h("a", { href: target }, icon("up"), h("span", { class: "name" }, "上一级"))));
   }
   for (const entry of data.entries) {
-    const isIso = entry.kind === "iso";
-    items.push(h("li", {},
-      h("button", {
-        type: "button",
-        class: `entry ${entry.kind}`,
-        title: entry.path,
-        "data-path": entry.path,
-        "aria-current": state.selected?.path === entry.path ? "true" : "false",
-        onclick: () => (isIso ? select(entry) : browse(entry.path)),
-      },
-      icon(entry.kind === "dir" ? "folder" : entry.kind === "iso" ? "iso" : "disc"),
-      h("span", { class: "name" }, data.path === null ? shortPath(entry.path) : entry.name),
-      entry.kind !== "dir" ? h("span", { class: "tag" }, KIND_LABEL[entry.kind]) : null,
-      isIso ? null : h("span", { class: "chev" }, icon("chev")))));
+    const checked = state.checked.has(entry.path);
+    const box = h("input", { type: "checkbox", "aria-label": `勾选 ${entry.name}`, checked });
+    box.addEventListener("change", () => {
+      if (box.checked) state.checked.add(entry.path); else state.checked.delete(entry.path);
+      renderBatch();
+    });
+    items.push(h("li", { class: `entry ${entry.kind}${state.selected === entry.path ? " on" : ""}` },
+      box,
+      h("a", { href: `#/browse/${encodeURIComponent(entry.path)}`, title: entry.path },
+        icon({ dir: "folder", dvd: "disc", iso: "iso" }[entry.kind] || "folder"),
+        h("span", { class: "name" }, data.path === null ? shortPath(entry.path) : entry.name),
+        entry.kind !== "dir" ? h("span", { class: "tag" }, KIND_LABEL[entry.kind]) : null)));
   }
   if (!data.entries.length) items.push(h("li", { class: "side-empty" }, "这里没有子目录或 ISO 文件"));
-  $("browse-list").replaceChildren(...items);
+  $("entries").replaceChildren(...items);
+  $("check-all").hidden = !data.entries.length;
 }
 
-function select(entry) {
-  state.selected = entry;
-  $("empty").hidden = true;
-  $("source").hidden = false;
-  const kind = $("source-kind");
-  kind.textContent = KIND_LABEL[entry.kind] || entry.kind;
-  kind.className = `kind-tag ${entry.kind}`;
-  $("source-name").textContent = basename(entry.path);
-  const path = $("source-path");
-  path.textContent = shortPath(entry.path);
-  path.title = entry.path;
-  for (const button of document.querySelectorAll("#browse-list .entry[data-path]")) {
-    button.setAttribute("aria-current", button.dataset.path === entry.path ? "true" : "false");
-  }
+function checkAll() {
+  const paths = state.listing.entries.map((e) => e.path);
+  const all = paths.every((p) => state.checked.has(p));
+  paths.forEach((p) => (all ? state.checked.delete(p) : state.checked.add(p)));
+  renderListing();
+  renderBatch();
 }
 
-// ---------- 操作 ----------
-
-function setActionTab(name) {
-  state.actionTab = name;
-  $("tab-run").setAttribute("aria-selected", String(name === "run"));
-  $("tab-torrent").setAttribute("aria-selected", String(name === "torrent"));
-  $("run-form").hidden = name !== "run";
-  $("torrent-form").hidden = name !== "torrent";
-  showError("submit-error", "");
+function renderBatch() {
+  const n = state.checked.size;
+  $("batch").hidden = n === 0;
+  $("batch-count").textContent = `已选 ${n} 项`;
 }
 
-function setupForms() {
-  const config = state.config;
-  $("run-count").value = config.screenshot_count;
-  $("torrent-announces").value = config.announces.join("\n");
-  const [low, high] = config.piece_length_range;
-  const options = [];
-  for (let n = low; n <= high; n += 1) {
-    const size = 2 ** n >= 1024 ** 2 ? `${2 ** n / 1024 ** 2} MiB` : `${2 ** n / 1024} KiB`;
-    options.push(h("option", { value: n, selected: n === config.piece_length }, n === 24 ? `${size}（默认）` : size));
-  }
-  $("torrent-piece").replaceChildren(...options);
-}
-
-async function submitJob(body) {
-  showError("submit-error", "");
-  try {
-    const job = await api("/api/jobs", { json: body });
-    await refreshJobs();
-    await openJob(job.id);
-  } catch (error) {
-    if (!(error instanceof AuthError)) showError("submit-error", error.message);
-  }
-}
-
-function submitRun(event) {
-  event.preventDefault();
-  if (!state.selected) return;
-  submitJob({ kind: "run", path: state.selected.path, count: Number($("run-count").value), upload: $("run-upload").checked });
-}
-
-function submitTorrent(event) {
-  event.preventDefault();
-  if (!state.selected) return;
-  const announces = $("torrent-announces").value.split("\n").map((line) => line.trim()).filter(Boolean);
-  submitJob({ kind: "torrent", path: state.selected.path, announces, piece_length: Number($("torrent-piece").value) });
-}
-
-// ---------- 任务列表 ----------
-
-function statusOf(job) {
-  if (job.status === "done" && job.ok === false) return { cls: "warn", text: "完成，有问题" };
-  const text = { queued: "排队中", running: "运行中", done: "完成", failed: "失败" }[job.status] || job.status;
-  return { cls: job.status, text };
-}
+// ---------- 侧栏：任务 ----------
 
 async function refreshJobs() {
-  let jobs;
-  try { jobs = await api("/api/jobs"); } catch { return; }
-  $("jobs-empty").hidden = jobs.length > 0;
-  $("jobs-count").textContent = jobs.length ? String(jobs.length) : "";
-  $("jobs").replaceChildren(...jobs.map((job) => {
+  try {
+    state.jobs = await api("/api/jobs");
+  } catch (error) {
+    if (!(error instanceof AuthError)) schedulePoll();
+    return;
+  }
+  renderTasks();
+  // 当前打开的任务：更新顶部进度
+  if (state.route && state.route.name === "job") {
+    const job = state.jobs.find((j) => j.id === state.route.id);
+    if (job) updateJobHero(job);
+  }
+  schedulePoll();
+}
+
+function schedulePoll() {
+  clearTimeout(state.pollTimer);
+  const active = state.jobs.some((j) => j.status === "queued" || j.status === "running");
+  state.pollTimer = setTimeout(refreshJobs, active ? 1500 : 6000);
+}
+
+function renderTasks() {
+  $("tasks-empty").hidden = state.jobs.length > 0;
+  $("task-count").textContent = state.jobs.length ? String(state.jobs.length) : "";
+  const currentId = state.route && state.route.name === "job" ? state.route.id : null;
+  $("tasks").replaceChildren(...state.jobs.map((job) => {
     const status = statusOf(job);
-    return h("li", {},
-      h("button", {
-        type: "button", class: "job-item", title: job.path,
-        "aria-current": job.id === state.jobId ? "true" : "false", onclick: () => openJob(job.id),
-      },
-      icon(JOB_ICON[job.kind] || "info"),
-      h("span", { class: "text" },
-        h("span", { class: "name" }, basename(job.path)),
-        h("span", { class: "sub" }, `${job.kind === "run" ? "截图" : "做种"} · ${formatClock(job.created_at)} · ${status.text}`)),
-      h("span", { class: `dot ${status.cls}`, "aria-hidden": "true" })));
+    return h("li", {}, h("a", { class: "task", href: `#/job/${job.id}`, title: job.path, "aria-current": job.id === currentId ? "page" : null },
+      h("span", { class: "top" }, icon(job.kind === "run" ? "image" : "peers"), h("span", { class: "name" }, basename(job.path))),
+      h("span", { class: "sub" }, `${JOB_SHORT[job.kind]} · ${clock(job.created_at)} · ${status.text}`),
+      progressBar(job)));
   }));
 }
 
-// ---------- 任务详情 ----------
+// ---------- 提交任务 ----------
 
-function closeStream() {
-  if (state.source) state.source.close();
-  state.source = null;
+function readOptions() {
+  const count = Number($("opt-count")?.value || state.opts.count);
+  const upload = $("opt-upload") ? $("opt-upload").checked : state.opts.upload;
+  const tracker = $("opt-tracker") ? $("opt-tracker").value : state.opts.tracker;
+  const piece = Number($("opt-piece")?.value || state.opts.piece);
+  state.opts = { count, upload, tracker, piece };
+  return state.opts;
 }
 
-function setJobTab(name) {
-  $("jtab-result").setAttribute("aria-selected", String(name === "result"));
-  $("jtab-log").setAttribute("aria-selected", String(name === "log"));
-  $("job-result").hidden = name !== "result";
-  $("job-log").hidden = name !== "log";
+function jobBodies(kind, path) {
+  const opts = state.opts;
+  const run = { kind: "run", path, count: opts.count, upload: opts.upload };
+  const torrent = { kind: "torrent", path, announces: opts.tracker.split(/\s+/).filter(Boolean), piece_length: opts.piece };
+  return kind === "both" ? [run, torrent] : kind === "run" ? [run] : [torrent];
 }
 
-function appendLog(event) {
-  const log = $("job-log");
-  const nearBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
-  log.append(h("span", { class: event.level === "error" ? "error" : null }, `${event.message}\n`));
-  $("log-count").textContent = String(log.childElementCount);
-  if (nearBottom) log.scrollTop = log.scrollHeight;
-}
-
-function renderHeader(job) {
-  $("job").hidden = false;
-  $("job-kind").textContent = JOB_KIND[job.kind] || job.kind;
-  $("job-title").textContent = basename(job.path);
-  $("job-title").title = job.path;
-  const status = statusOf(job);
-  const badge = $("job-status");
-  badge.className = `status ${status.cls}`;
-  badge.replaceChildren(h("span", { class: `dot ${status.cls}`, "aria-hidden": "true" }), status.text);
-  $("job-progress").hidden = job.status === "done" || job.status === "failed";
-}
-
-async function openJob(id) {
-  closeStream();
-  state.jobId = id;
-  for (const button of document.querySelectorAll(".job-item")) button.setAttribute("aria-current", "false");
-  let job;
-  try { job = await api(`/api/jobs/${id}`); } catch { return; }
-  if (state.jobId !== id) return;
-  renderHeader(job);
-  $("job-log").replaceChildren();
-  $("log-count").textContent = "";
-  job.events.forEach(appendLog);
-  await refreshJobs();
-
-  if (job.status === "done" || job.status === "failed") {
-    renderResult(job);
-    setJobTab("result");
+async function submit(kind, paths) {
+  readOptions();
+  const bodies = paths.flatMap((path) => jobBodies(kind, path));
+  let first = null;
+  try {
+    for (const body of bodies) {
+      const job = await api("/api/jobs", { json: body });
+      first = first || job;
+    }
+  } catch (error) {
+    if (!(error instanceof AuthError)) toast(error.message);
+    await refreshJobs();
     return;
   }
-  $("job-result").replaceChildren(notice("info", "任务进行中，完成后在这里显示结果。可以在“日志”中查看进度。"));
-  setJobTab("log");
-  const source = new EventSource(`/api/jobs/${id}/events?after=${job.events.length}`);
-  state.source = source;
-  source.addEventListener("log", (message) => appendLog(JSON.parse(message.data)));
-  source.addEventListener("end", async () => {
-    closeStream();
-    const detail = await api(`/api/jobs/${id}`);
-    if (state.jobId !== id) return;
-    renderHeader(detail);
-    renderResult(detail);
-    setJobTab("result");
-    await refreshJobs();
-  });
-  source.addEventListener("error", () => {
-    // 浏览器会自动重连；连接被关闭时检查是否需要重新登录
-    if (source.readyState === EventSource.CLOSED) api("/api/config").catch(() => {});
-  });
-  $("job").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  toast(bodies.length > 1 ? `已加入队列：${bodies.length} 个任务` : "已开始");
+  await refreshJobs();
+  if (first) location.hash = `#/job/${first.id}`;
+}
+
+async function onBatch(event) {
+  const action = event.target.closest("[data-batch]")?.dataset.batch;
+  if (!action) return;
+  if (action === "clear") {
+    state.checked.clear();
+    renderListing();
+    renderBatch();
+    return;
+  }
+  const paths = [...state.checked];
+  state.checked.clear();
+  renderListing();
+  renderBatch();
+  await submit(action, paths);
+}
+
+// ---------- 主区域：通用 ----------
+
+function hero({ eyebrow, title, meta = [], backdrop = null, compact = false, children = [] }) {
+  const bg = h("div", { class: `backdrop${backdrop ? "" : " fallback"}`, "aria-hidden": "true" });
+  if (backdrop) bg.style.backgroundImage = `url("${backdrop}")`;
+  return h("section", { class: `hero${compact ? " compact" : ""}` }, bg,
+    eyebrow ? h("p", { class: "eyebrow" }, eyebrow) : null,
+    h("h1", {}, title),
+    meta.length ? h("div", { class: "meta" }, meta) : null,
+    children);
+}
+
+function optionsRow() {
+  const o = state.opts;
+  const pieces = [];
+  const [low, high] = state.config.piece_length_range;
+  for (let n = low; n <= high; n += 1) {
+    pieces.push(h("option", { value: n, selected: n === o.piece }, n === 24 ? `${pieceLabel(n)}（默认）` : pieceLabel(n)));
+  }
+  return h("div", { class: "options" },
+    h("label", {}, "截图", h("input", { id: "opt-count", type: "number", min: 1, max: 100, value: o.count }), h("span", { class: "hint" }, "张/盘")),
+    h("label", { class: "switch" }, h("input", { id: "opt-upload", type: "checkbox", checked: o.upload }), h("span", { class: "track" }), "上传 Pixhost 并生成发布说明"),
+    h("label", {}, "Tracker", h("input", { id: "opt-tracker", type: "text", value: o.tracker, placeholder: "可留空，多个用空格分隔", spellcheck: "false" })),
+    h("label", {}, "分块", h("select", { id: "opt-piece" }, pieces)));
+}
+
+function setMain(...nodes) {
+  $("main").replaceChildren(...nodes);
+}
+
+async function firstScreenshot(path) {
+  // 同一来源最近一次成功的截图任务里的第一张截图，用作背景
+  const job = state.jobs.find((j) => j.path === path && j.kind === "run" && j.status === "done");
+  if (!job) return null;
+  const detail = await jobDetail(job.id);
+  for (const disc of detail.result?.discs || []) {
+    const shot = (disc.screenshots || []).find((s) => s.ok);
+    if (shot) return fileUrl(detail, shot.file);
+  }
+  return null;
+}
+
+async function jobDetail(id, fresh = false) {
+  if (!fresh && state.details.has(id)) return state.details.get(id);
+  const detail = await api(`/api/jobs/${id}`);
+  if (detail.status === "done" || detail.status === "failed") state.details.set(id, detail);
+  return detail;
 }
 
 function fileUrl(job, name) {
   return `/api/jobs/${job.id}/files/${encodeURIComponent(name)}`;
 }
 
-function codePanel({ title, format, text, loader, collapsed }) {
-  const pre = h("pre", {}, text ?? "");
-  let content = text ?? null;
-  const load = async () => {
-    if (content === null) {
-      pre.textContent = "加载中…";
-      content = await loader();
-      pre.textContent = content;
-    }
-    return content;
+// ---------- 页面：来源 ----------
+
+async function showSource(path) {
+  state.selected = path;
+  const data = await api(`/api/browse?path=${encodeURIComponent(path)}`);
+  // 目录直接在侧栏展开；DVD 文件夹和 ISO 留在上一级列表中高亮
+  if (data.kind === "dir" || data.parent === null) {
+    if (!state.listing || state.listing.path !== data.path) state.checked.clear();
+    state.listing = data;
+    renderListing();
+    renderBatch();
+  } else if (!state.listing || state.listing.path !== data.parent) {
+    await loadListing(data.parent);
+  } else {
+    renderListing();
+  }
+
+  const [info, backdrop] = await Promise.all([api(`/api/source?path=${encodeURIComponent(path)}`), firstScreenshot(path)]);
+  if (state.selected !== path) return;
+  const types = [...new Set(info.discs.map((d) => d.media_type))].join(" + ");
+  const meta = info.discs.length
+    ? [h("span", {}, `${info.discs.length} 张盘`), h("span", {}, types), h("span", {}, formatBytes(info.total_bytes))]
+    : [h("span", {}, "这里没有找到 DVD")];
+  meta.push(h("span", { class: "path", title: path }, shortPath(path)));
+
+  const hasDiscs = info.discs.length > 0;
+  const actions = h("div", { class: "actions" },
+    h("button", { type: "button", class: "btn light", disabled: !hasDiscs, onclick: () => submit("run", [path]) }, icon("play"), "生成截图与 MediaInfo"),
+    h("button", { type: "button", class: "btn glass", onclick: () => submit("torrent", [path]) }, "做种"),
+    h("button", { type: "button", class: "btn glass", disabled: !hasDiscs, onclick: () => submit("both", [path]) }, "两者都做"));
+
+  const sections = [];
+  if (hasDiscs) {
+    sections.push(h("section", {}, h("h2", { class: "section-title" }, "包含的盘"),
+      h("div", { class: "cards" }, info.discs.map((d) =>
+        h("div", { class: "card", title: d.path }, h("b", {}, d.name),
+          h("span", {}, `${d.media_type} · ${KIND_LABEL[d.kind]} · ${formatBytes(d.bytes)}`),
+          h("span", { class: "where" }, shortPath(d.kind === "iso" ? d.path : parentOf(d.path))))))));
+  }
+  const related = state.jobs.filter((j) => j.path === path);
+  if (related.length) {
+    sections.push(h("section", {}, h("h2", { class: "section-title" }, "这个来源的任务"),
+      h("div", { class: "cards" }, related.map((j) => {
+        const status = statusOf(j);
+        return h("a", { class: "card", href: `#/job/${j.id}` }, h("b", {}, JOB_LABEL[j.kind]), h("span", {}, `${clock(j.created_at)} · ${status.text}`));
+      }))));
+  }
+  setMain(
+    hero({ eyebrow: KIND_LABEL[info.kind] || "目录", title: info.name || path, meta, backdrop, children: [actions, optionsRow()] }),
+    h("div", { class: "content" }, sections));
+}
+
+// ---------- 页面：任务 ----------
+
+function closeStream() {
+  if (state.stream) state.stream.close();
+  state.stream = null;
+}
+
+function updateJobHero(summary) {
+  const pill = $("job-pill");
+  if (!pill) return;
+  const status = statusOf(summary);
+  pill.className = `pill ${status.cls}`;
+  pill.textContent = status.text;
+  const bar = $("job-bar");
+  if (bar) {
+    const fresh = progressBar(summary);
+    fresh.id = "job-bar";
+    fresh.style.cssText = bar.style.cssText;
+    bar.replaceWith(fresh);
+  }
+}
+
+/** 按创建时间排在当前任务之后的下一个已完成任务，到末尾后从头开始。 */
+function nextDoneJob(currentId) {
+  const done = state.jobs.filter((j) => j.status === "done").slice().reverse();
+  const index = done.findIndex((j) => j.id === currentId);
+  const next = done[(index + 1) % done.length];
+  return next && next.id !== currentId ? next : null;
+}
+
+async function showJob(id, tab) {
+  closeStream();
+  let job;
+  try {
+    job = await jobDetail(id, true);
+  } catch (error) {
+    if (!(error instanceof AuthError)) setMain(h("div", { class: "content", style: "padding-top:48px" }, notice("bad", error.message)));
+    return;
+  }
+  if (state.route.name !== "job" || state.route.id !== id) return;
+  state.selected = job.path;
+  renderTasks();
+  if (state.listing && state.listing.path !== null) renderListing();
+
+  const finished = job.status === "done" || job.status === "failed";
+  const status = statusOf(job);
+  const next = finished ? nextDoneJob(id) : null;
+  let backdrop = null;
+  if (job.kind === "run" && job.result) {
+    const disc = job.result.discs.find((d) => (d.screenshots || []).some((s) => s.ok));
+    if (disc) backdrop = fileUrl(job, disc.screenshots.find((s) => s.ok).file);
+  }
+  const heroNode = hero({
+    eyebrow: JOB_LABEL[job.kind],
+    title: basename(job.path),
+    compact: true,
+    backdrop,
+    meta: [h("span", {}, h("span", { id: "job-pill", class: `pill ${status.cls}` }, status.text)), h("span", {}, clock(job.created_at)), h("span", { class: "path", title: job.path }, shortPath(job.path))],
+    children: [
+      finished ? null : Object.assign(progressBar(job), { id: "job-bar", style: "margin-top:16px;max-width:520px" }),
+      h("div", { class: "actions" },
+        h("a", { class: "btn glass small", href: `#/browse/${encodeURIComponent(job.path)}` }, icon("up"), "回到来源"),
+        next ? h("a", { class: "btn glass small", href: `#/job/${next.id}` }, "下一个完成的任务", icon("next")) : null),
+    ],
+  });
+
+  const tabs = h("div", { class: "tabs", role: "tablist" },
+    h("a", { role: "tab", href: `#/job/${id}`, "aria-selected": String(tab !== "log") }, "结果"),
+    h("a", { role: "tab", href: `#/job/${id}/log`, "aria-selected": String(tab === "log") }, "日志", h("span", { id: "log-count", class: "count" }, job.events.length || "")));
+
+  const log = h("pre", { id: "job-log", class: "log" });
+  const appendLog = (event) => {
+    const near = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+    log.append(h("span", { class: event.level === "error" ? "e" : null }, `${event.message}\n`));
+    const count = $("log-count");
+    if (count) count.textContent = String(log.childElementCount);
+    if (near) log.scrollTop = log.scrollHeight;
   };
-  const panel = h("section", { class: `panel${collapsed ? " collapsed" : ""}` });
-  let heading;
-  if (collapsed) {
-    pre.hidden = true;
-    heading = h("button", { type: "button", class: "toggle", "aria-expanded": "false" }, icon("chev"), title);
-    heading.addEventListener("click", async () => {
-      const open = heading.getAttribute("aria-expanded") !== "true";
-      heading.setAttribute("aria-expanded", String(open));
-      panel.classList.toggle("collapsed", !open);
-      pre.hidden = !open;
-      if (open) await load();
+  job.events.forEach(appendLog);
+  if (!job.events.length && job.status === "queued") {
+    const ahead = state.jobs.filter((j) => j.id !== id && (j.status === "running" || (j.status === "queued" && j.created_at < job.created_at))).length;
+    log.append(`排队中，前面还有 ${ahead} 个任务。同一时间最多运行 ${state.config.max_jobs} 个。\n`);
+  }
+
+  let body;
+  if (tab === "log") body = log;
+  else if (!finished) body = notice("", "任务进行中，完成后这里显示结果。进度可以在“日志”里看。");
+  else body = h("div", { style: "display:flex;flex-direction:column;gap:32px" }, renderResult(job));
+
+  setMain(heroNode, h("div", { class: "content" }, h("div", {}, tabs), body));
+  if (tab === "log") log.scrollTop = log.scrollHeight;
+
+  if (!finished) {
+    const stream = new EventSource(`/api/jobs/${id}/events?after=${job.events.length}`);
+    state.stream = stream;
+    stream.addEventListener("log", (message) => { if (tab === "log") appendLog(JSON.parse(message.data)); else { const c = $("log-count"); if (c) c.textContent = String(Number(c.textContent || 0) + 1); } });
+    stream.addEventListener("end", async () => {
+      closeStream();
+      await refreshJobs();
+      if (state.route.name === "job" && state.route.id === id) showJob(id, tab);
     });
-  } else {
-    heading = h("h3", {}, title);
+    stream.addEventListener("error", () => {
+      if (stream.readyState === EventSource.CLOSED) api("/api/config").catch(() => {});
+    });
   }
-  panel.append(
-    h("div", { class: "panel-head" }, heading, format ? h("span", { class: "format" }, format) : null, copyButton("复制", load, !collapsed)),
-    pre,
-  );
-  return panel;
-}
-
-function renderDisc(job, disc) {
-  const chips = [];
-  if (disc.vob) {
-    chips.push(h("span", { class: "chip strong" }, disc.media_type));
-    chips.push(h("span", { class: "chip" }, disc.standard || `高度 ${disc.height}`));
-    chips.push(h("span", { class: "chip" }, `${disc.size[0]}×${disc.size[1]}`));
-    chips.push(h("span", { class: "chip" }, `PAR ${disc.par}`));
-    chips.push(h("span", { class: "chip" }, `VOB ${formatDuration(disc.duration)}`));
-    chips.push(h("span", { class: "chip" }, formatBytes(disc.total_bytes)));
-  }
-  const card = h("section", { class: "disc-card" },
-    h("div", { class: "disc-head" }, h("h3", {}, disc.name || disc.label), h("div", { class: "chips" }, chips)));
-  if (disc.vob) {
-    card.append(h("p", { class: "files", title: disc.source },
-      "VOB ", h("b", {}, disc.vob), "　IFO ", h("b", {}, disc.ifo || "无"),
-      `　${disc.width}×${disc.height} → ${disc.size[0]}×${disc.size[1]}`));
-  }
-  if (disc.error) card.append(notice("bad", disc.error));
-
-  if (disc.screenshots) {
-    card.append(h("div", { class: "gallery" }, disc.screenshots.map((shot) => {
-      if (!shot.ok) {
-        return h("div", { class: "thumb failed" }, icon("alert"), "截图失败", h("span", {}, formatSeconds(shot.at)));
-      }
-      const url = fileUrl(job, shot.file);
-      return h("figure", { class: "thumb" },
-        h("a", { href: url, target: "_blank", rel: "noopener", title: shot.file },
-          h("img", { src: url, alt: `${shot.file}，${formatSeconds(shot.at)}`, loading: "lazy" })),
-        h("figcaption", {}, h("span", {}, formatSeconds(shot.at)),
-          shot.url ? h("a", { href: shot.url, target: "_blank", rel: "noopener noreferrer" }, "直链", icon("link")) : null));
-    })));
-  }
-  if (disc.mediainfo_file) {
-    card.append(codePanel({
-      title: "MediaInfo",
-      format: "VOB + IFO",
-      loader: () => api(fileUrl(job, disc.mediainfo_file)),
-      collapsed: true,
-    }));
-  }
-  return card;
-}
-
-function renderRunResult(job, result) {
-  const nodes = [];
-  const shots = result.discs.flatMap((disc) => disc.screenshots || []);
-  const okShots = shots.filter((shot) => shot.ok).length;
-  const uploaded = shots.filter((shot) => shot.url).length;
-  nodes.push(h("p", { class: "summary" },
-    h("span", {}, h("strong", {}, result.discs.length), " 张盘"),
-    h("span", {}, "截图 ", h("strong", {}, `${okShots} / ${shots.length}`), " 成功"),
-    job.params.upload ? h("span", {}, "已上传 ", h("strong", {}, uploaded), " 张") : h("span", {}, "未上传图床")));
-
-  if (result.post) {
-    nodes.push(codePanel({ title: "发布说明", format: "BBCode", text: result.post }));
-  } else if (job.params.upload) {
-    nodes.push(notice("warn", "截图没有全部上传成功，未生成发布说明。请查看日志后重新运行。"));
-  } else {
-    nodes.push(notice("info", "本次没有上传图床，因此没有生成发布说明。"));
-  }
-  nodes.push(...result.discs.map((disc) => renderDisc(job, disc)));
-  return nodes;
-}
-
-function renderTorrentResult(job, result) {
-  const count = job.params.announces.length;
-  const size = 2 ** job.params.piece_length / 1024 ** 2;
-  return [h("div", { class: "file-card" },
-    icon("peers"),
-    h("div", { class: "text" },
-      h("p", { class: "name" }, result.torrent_file),
-      h("p", { class: "meta" }, `private · 分块 ${size >= 1 ? `${size} MiB` : `${size * 1024} KiB`} · ${count ? `${count} 个 Tracker` : "未填写 Tracker"}`)),
-    h("a", { class: "btn primary", href: fileUrl(job, result.torrent_file), download: result.torrent_file }, icon("download"), "下载种子"))];
 }
 
 function renderResult(job) {
   const nodes = [];
   if (job.status === "failed") nodes.push(notice("bad", job.error || "任务失败"));
-  if (job.result && job.kind === "run") nodes.push(...renderRunResult(job, job.result));
-  if (job.result && job.kind === "torrent") nodes.push(...renderTorrentResult(job, job.result));
-  $("job-result").replaceChildren(...nodes);
+  const result = job.result;
+  if (!result) return nodes;
+
+  if (job.kind === "torrent") {
+    const n = job.params.announces.length;
+    nodes.push(h("div", { class: "file" }, icon("peers"),
+      h("div", { class: "t" }, h("b", {}, result.torrent_file),
+        h("span", {}, `private · 分块 ${pieceLabel(job.params.piece_length)} · ${n ? `${n} 个 Tracker` : "未填写 Tracker"}`)),
+      h("a", { class: "btn amber", href: fileUrl(job, result.torrent_file), download: result.torrent_file }, icon("down"), "下载种子")));
+    return nodes;
+  }
+
+  const shots = result.discs.flatMap((d) => d.screenshots || []);
+  nodes.push(h("p", { class: "summary" },
+    h("span", {}, h("b", {}, result.discs.length), " 张盘"),
+    h("span", {}, "截图 ", h("b", {}, `${shots.filter((s) => s.ok).length} / ${shots.length}`)),
+    job.params.upload ? h("span", {}, "已上传 ", h("b", {}, shots.filter((s) => s.url).length), " 张") : h("span", {}, "未上传图床")));
+
+  if (result.post) {
+    nodes.push(h("section", { class: "code" },
+      h("header", {}, "发布说明", h("span", { class: "sp" }), h("span", { class: "fmt" }, "BBCode"), copyButton("复制", async () => result.post, "amber")),
+      h("pre", {}, result.post)));
+  } else if (job.params.upload) {
+    nodes.push(notice("warn", "截图没有全部上传成功，未生成发布说明。请查看日志后重新运行。"));
+  } else {
+    nodes.push(notice("", "这次没有上传图床，所以没有生成发布说明。"));
+  }
+
+  for (const disc of result.discs) {
+    const section = h("section", { style: "display:flex;flex-direction:column;gap:18px" });
+    const pills = disc.vob ? [
+      h("span", { class: "pill mono" }, `${disc.media_type} · ${disc.standard || `高度 ${disc.height}`}`),
+      h("span", { class: "pill mono" }, `${disc.size[0]}×${disc.size[1]}`),
+      h("span", { class: "pill mono" }, duration(disc.duration)),
+    ] : [];
+    section.append(h("h2", { class: "section-title", style: "margin:0" }, disc.name || disc.label, pills));
+    if (disc.error) section.append(notice("bad", disc.error));
+    if (disc.screenshots) {
+      section.append(h("div", { class: "gallery" }, disc.screenshots.map((shot) => {
+        if (!shot.ok) return h("div", { class: "shot fail" }, "截图失败", h("span", {}, timecode(shot.at)));
+        const url = fileUrl(job, shot.file);
+        return h("figure", { class: "shot" },
+          h("a", { href: url, target: "_blank", rel: "noopener", title: shot.file }, h("img", { src: url, alt: `${shot.file}，${timecode(shot.at)}`, loading: "lazy" })),
+          h("figcaption", {}, h("span", {}, timecode(shot.at)),
+            shot.url ? h("a", { href: shot.url, target: "_blank", rel: "noopener noreferrer" }, "直链", icon("link")) : null));
+      })));
+    }
+    if (disc.vob) {
+      section.append(h("div", { class: "two" },
+        disc.mediainfo_file ? mediainfoPanel(job, disc) : h("div"),
+        h("dl", { class: "facts" },
+          h("dt", {}, "容量"), h("dd", {}, `${disc.media_type} · ${formatBytes(disc.total_bytes)}`),
+          h("dt", {}, "制式"), h("dd", {}, disc.standard || `未知（高度 ${disc.height}）`),
+          h("dt", {}, "截图尺寸"), h("dd", {}, `${disc.width}×${disc.height} → ${disc.size[0]}×${disc.size[1]}`),
+          h("dt", {}, "PAR"), h("dd", {}, disc.par),
+          h("dt", {}, "VOB"), h("dd", {}, h("code", {}, disc.vob), ` · ${duration(disc.duration)}`),
+          h("dt", {}, "IFO"), h("dd", {}, h("code", {}, disc.ifo || "无")),
+          h("dt", {}, "来源"), h("dd", { title: disc.source }, h("code", {}, shortPath(disc.source))))));
+    }
+    nodes.push(section);
+  }
+  return nodes;
+}
+
+function mediainfoPanel(job, disc) {
+  let text = null;
+  const pre = h("pre", { hidden: true });
+  const load = async () => {
+    if (text === null) {
+      pre.textContent = "加载中…";
+      text = await api(fileUrl(job, disc.mediainfo_file));
+      pre.textContent = text;
+    }
+    return text;
+  };
+  const panel = h("section", { class: "code collapsed" });
+  const toggle = h("button", { type: "button", class: "toggle", "aria-expanded": "false" }, icon("chev"), "MediaInfo");
+  toggle.addEventListener("click", async () => {
+    const open = toggle.getAttribute("aria-expanded") !== "true";
+    toggle.setAttribute("aria-expanded", String(open));
+    panel.classList.toggle("collapsed", !open);
+    pre.hidden = !open;
+    if (open) await load();
+  });
+  panel.append(h("header", {}, toggle, h("span", { class: "sp" }), h("span", { class: "fmt" }, "VOB + IFO"), copyButton("复制", load)), pre);
+  return panel;
+}
+
+// ---------- 页面：设置、空白 ----------
+
+function showSettings() {
+  state.selected = null;
+  if (state.listing) renderListing();
+  const c = state.config;
+  const row = (term, value) => [h("dt", {}, term), h("dd", {}, value)];
+  setMain(
+    hero({ eyebrow: "设置", title: "当前配置", compact: true, meta: [h("span", {}, "在配置文件中修改，重启服务后生效")] }),
+    h("div", { class: "content" }, h("dl", { class: "settings" },
+      row("监听地址", c.listen),
+      row("允许浏览的目录", c.roots.join("\n")),
+      row("输出目录", c.output_dir),
+      row("ISO 临时目录", c.temp_dir || "系统临时目录"),
+      row("同时运行的任务", String(c.max_jobs)),
+      row("每盘截图", `${c.screenshot_count} 张（按 jietu 规则取点）`),
+      row("图床", `Pixhost（${c.pixhost_domain}）${c.proxy ? "，经代理" : ""}`),
+      row("默认 Tracker", c.announces.join("\n") || "无"),
+      row("默认分块", `${pieceLabel(c.piece_length)}（2^${c.piece_length}）`),
+      row("发布说明模板", c.custom_template ? "自定义模板" : "默认 BBCode"),
+      row("配置文件", "~/.config/whatdvd/config.toml，或启动时用 -c 指定"))));
+}
+
+function showEmpty() {
+  state.selected = null;
+  setMain(h("div", { class: "empty" }, h("span", { class: "disc-mark huge", "aria-hidden": "true" }),
+    h("h2", {}, "选择要处理的 DVD"), h("p", {}, "在左侧打开 DVD 文件夹、ISO，或包含多张盘的目录。勾选多项可以批量处理。")));
+}
+
+// ---------- 路由 ----------
+
+function parseRoute() {
+  const hash = location.hash.replace(/^#\/?/, "");
+  if (hash.startsWith("browse/")) return { name: "browse", path: decodeURIComponent(hash.slice(7)) };
+  const job = hash.match(/^job\/([0-9a-f]+)(\/log)?$/);
+  if (job) return { name: "job", id: job[1], tab: job[2] ? "log" : "result" };
+  if (hash === "settings") return { name: "settings" };
+  return { name: "home" };
+}
+
+async function route() {
+  closeStream();
+  state.route = parseRoute();
+  $("nav-settings").setAttribute("aria-current", state.route.name === "settings" ? "page" : "false");
+  window.scrollTo(0, 0);
+  try {
+    if (state.route.name === "browse") await showSource(state.route.path);
+    else if (state.route.name === "job") await showJob(state.route.id, state.route.tab);
+    else if (state.route.name === "settings") showSettings();
+    else {
+      if (state.config.roots.length === 1) {
+        location.replace(`#/browse/${encodeURIComponent(state.config.roots[0])}`);
+        return;
+      }
+      await loadListing(null);
+      showEmpty();
+    }
+  } catch (error) {
+    if (error instanceof AuthError) return;
+    setMain(h("div", { class: "content", style: "padding-top:48px" }, notice("bad", error.message), h("p", {}, h("a", { class: "btn glass small", href: "#/", style: "margin-top:12px" }, "回到首页"))));
+  }
+  renderTasks();
 }
 
 // ---------- 启动 ----------
@@ -586,27 +776,33 @@ async function start() {
   try {
     state.config = await api("/api/config");
   } catch (error) {
-    if (!(error instanceof AuthError)) showError("login-error", error.message);
+    if (!(error instanceof AuthError)) {
+      $("login-error").textContent = error.message;
+      $("login-error").hidden = false;
+    }
     return;
   }
+  const c = state.config;
+  state.opts = state.opts || { count: c.screenshot_count, upload: true, tracker: c.announces.join(" "), piece: c.piece_length };
   $("login").hidden = true;
   $("app").hidden = false;
-  setupForms();
-  const saved = storageGet();
-  await browse(saved || (state.config.roots.length === 1 ? state.config.roots[0] : null));
   await refreshJobs();
-  if (!state.timer) state.timer = setInterval(refreshJobs, 5000);
+  if (!state.listing) {
+    try { await loadListing(c.roots.length === 1 ? c.roots[0] : null); } catch { /* route() 会显示错误 */ }
+  }
+  await route();
 }
 
 document.addEventListener("DOMContentLoaded", () => {
+  $("nav-settings").append(icon("gear"));
   $("logout").append(icon("logout"));
   $("login-form").addEventListener("submit", login);
   $("logout").addEventListener("click", logout);
-  $("tab-run").addEventListener("click", () => setActionTab("run"));
-  $("tab-torrent").addEventListener("click", () => setActionTab("torrent"));
-  $("jtab-result").addEventListener("click", () => setJobTab("result"));
-  $("jtab-log").addEventListener("click", () => setJobTab("log"));
-  $("run-form").addEventListener("submit", submitRun);
-  $("torrent-form").addEventListener("submit", submitTorrent);
+  $("check-all").addEventListener("click", checkAll);
+  $("batch").addEventListener("click", onBatch);
+  document.addEventListener("change", (event) => {
+    if (event.target.closest(".options")) readOptions();
+  });
+  window.addEventListener("hashchange", () => { if (state.config) route(); });
   start();
 });

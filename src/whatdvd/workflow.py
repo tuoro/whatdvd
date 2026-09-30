@@ -24,6 +24,25 @@ class Reporter(Protocol):
 
     def error(self, message: str) -> None: ...
 
+    def progress(self, done: int, total: int) -> None:
+        """进度（按步计：每张截图、每份 MediaInfo、每次上传各算一步）。"""
+        ...
+
+
+class _Steps:
+    def __init__(self, reporter: Reporter, total: int) -> None:
+        self.reporter = reporter
+        self.total = max(total, 1)
+        self.done = 0
+
+    def tick(self) -> None:
+        self.done = min(self.done + 1, self.total)
+        self.reporter.progress(self.done, self.total)
+
+    def finish(self) -> None:
+        self.done = self.total
+        self.reporter.progress(self.done, self.total)
+
 
 class WorkflowError(RuntimeError):
     """整个任务无法开始，例如缺少外部命令或路径里没有 DVD。"""
@@ -100,10 +119,18 @@ def describe(source: Path, analysis: Analysis) -> list[str]:
     ]
 
 
-def _process_discs(runner: Runner, path: Path, options: RunOptions, reporter: Reporter) -> list[DiscResult]:
+def _process_discs(runner: Runner, path: Path, options: RunOptions, reporter: Reporter) -> tuple[list[DiscResult], _Steps]:
     sources = find_sources(path)
     if any(is_iso(source) for source in sources):
         check_tools(runner, ["7z"])
+    per_disc = options.count + 1 if options.generate else 1
+    if options.generate and options.upload:
+        per_disc += options.count
+    steps = _Steps(reporter, len(sources) * per_disc)
+
+    def step(message: str) -> None:
+        reporter.info(f"  {message}")
+        steps.tick()
 
     results: list[DiscResult] = []
     for source in sources:
@@ -114,30 +141,42 @@ def _process_discs(runner: Runner, path: Path, options: RunOptions, reporter: Re
                 result.analysis = analyze(runner, disc)
                 for line in describe(source, result.analysis):
                     reporter.info(line)
+                if not options.generate:
+                    steps.tick()
                 if options.generate:
                     result.output = generate(
                         runner,
                         result.analysis,
                         count=options.count,
                         output_dir=options.output_dir,
-                        progress=lambda message: reporter.info(f"  {message}"),
+                        progress=step,
                     )
                     if result.output.failed:
                         reporter.error(f"  有 {len(result.output.failed)} 张截图失败。")
         except (ScanError, ProbeError, CommandError, OSError) as error:
             result.error = str(error)
             reporter.error(f"[{result.label}] 失败：{error}")
-    return results
+    return results, steps
 
 
 def _upload_and_post(
-    discs: list[DiscResult], options: RunOptions, path: Path, reporter: Reporter, host_factory: HostFactory
+    discs: list[DiscResult],
+    options: RunOptions,
+    path: Path,
+    reporter: Reporter,
+    host_factory: HostFactory,
+    steps: _Steps,
 ) -> Path | None:
     """截图全部上传成功才生成发布说明。"""
     done = [d for d in discs if d.output is not None and d.analysis is not None]
     if not done:
         return None
     reporter.info("[上传截图到图床]")
+
+    def step(message: str) -> None:
+        reporter.info(f"  {message}")
+        steps.tick()
+
     host = host_factory()
     try:
         for disc in done:
@@ -145,7 +184,7 @@ def _upload_and_post(
             disc.uploads = upload_all(
                 host,
                 [shot.path for shot in disc.output.shots if shot.ok],
-                lambda message: reporter.info(f"  {message}"),
+                step,
             )
     finally:
         host.close()
@@ -172,7 +211,7 @@ def run(runner: Runner, path: Path, options: RunOptions, reporter: Reporter, hos
     """处理一个输入路径下的所有盘。无法开始时抛出 WorkflowError。"""
     check_tools(runner, MEDIA_TOOLS)
     try:
-        discs = _process_discs(runner, path, options, reporter)
+        discs, steps = _process_discs(runner, path, options, reporter)
     except ScanError as error:
         raise WorkflowError(str(error)) from None
 
@@ -181,6 +220,7 @@ def run(runner: Runner, path: Path, options: RunOptions, reporter: Reporter, hos
         d.error is None and (d.output is None or not d.output.failed) for d in discs
     )
     if options.generate and options.upload:
-        result.post_path = _upload_and_post(discs, options, path, reporter, host_factory)
+        result.post_path = _upload_and_post(discs, options, path, reporter, host_factory, steps)
         result.ok = result.ok and result.post_path is not None
+    steps.finish()
     return result

@@ -15,8 +15,10 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+from ..dvd import DVD5_MAX_BYTES, ScanError
+from ..post import DEFAULT_TEMPLATE
 from ..runner import Runner, SubprocessRunner
-from ..sources import is_iso
+from ..sources import find_sources, is_iso
 from ..torrent import PIECE_LENGTH_RANGE, make_torrent
 from ..upload import Pixhost
 from ..workflow import HostFactory, RunOptions, RunResult, check_tools, output_title, run
@@ -80,6 +82,21 @@ def _entry_kind(path: Path) -> str | None:
     except OSError:
         return None
     return None
+
+
+def _disc_summary(source: Path) -> dict[str, Any]:
+    if is_iso(source):
+        name, size = source.stem, source.stat().st_size
+    else:
+        name = source.parent.name
+        size = sum(p.stat().st_size for p in source.iterdir() if p.is_file())
+    return {
+        "name": name,
+        "path": str(source),
+        "kind": "iso" if is_iso(source) else "dvd",
+        "bytes": size,
+        "media_type": "DVD5" if size <= DVD5_MAX_BYTES else "DVD9",
+    }
 
 
 def _serialize_run(result: RunResult) -> dict[str, Any]:
@@ -217,6 +234,29 @@ def create_app(
             "announces": list(config.announces),
             "piece_length": config.piece_length,
             "piece_length_range": [PIECE_LENGTH_RANGE.start, PIECE_LENGTH_RANGE.stop - 1],
+            "listen": f"{config.host}:{config.port}",
+            "output_dir": str(config.output_dir),
+            "temp_dir": str(config.temp_dir) if config.temp_dir else None,
+            "max_jobs": config.max_jobs,
+            "proxy": bool(config.proxy),
+            "custom_template": config.template != DEFAULT_TEMPLATE,
+        }
+
+    @app.get("/api/source", dependencies=auth)
+    async def source(path: str) -> dict[str, Any]:
+        """所选路径下的盘：只看文件大小，不调用 mediainfo，足够快。"""
+        target = resolve_allowed(path)
+        try:
+            sources = await asyncio.to_thread(find_sources, target)
+        except ScanError:
+            sources = []
+        discs = [_disc_summary(item) for item in sources]
+        return {
+            "path": str(target),
+            "name": target.name,
+            "kind": _entry_kind(target) or "dir",
+            "discs": discs,
+            "total_bytes": sum(d["bytes"] for d in discs),
         }
 
     @app.get("/api/browse", dependencies=auth)
