@@ -11,77 +11,107 @@
 <body>
   <div id="login" class="login" hidden>
     <form id="login-form" class="login-card">
-      <h1>whatdvd</h1>
-      <p class="muted">DVD 发种助手。请输入启动时设置或打印的 token。</p>
-      <label for="login-token">Token</label>
-      <input id="login-token" type="password" autocomplete="current-password" required>
-      <p id="login-error" class="error" hidden></p>
-      <button type="submit" class="primary">登录</button>
+      <span class="disc-mark large" aria-hidden="true"></span>
+      <div class="login-title">
+        <h1>whatdvd</h1>
+        <p>DVD 发种助手</p>
+      </div>
+      <div class="field">
+        <label for="login-token">访问 token</label>
+        <input id="login-token" type="password" autocomplete="current-password" placeholder="启动时设置或打印的 token" required>
+      </div>
+      <p id="login-error" class="form-error" hidden></p>
+      <button type="submit" class="btn primary block">登录</button>
     </form>
   </div>
 
-  <div id="app" hidden>
-    <header class="topbar">
-      <div class="brand"><strong>whatdvd</strong><span class="muted">DVD 发种助手</span></div>
-      <button id="logout" type="button" class="ghost">退出登录</button>
-    </header>
+  <div id="app" class="shell" hidden>
+    <aside class="sidebar">
+      <div class="brand">
+        <span class="disc-mark" aria-hidden="true"></span>
+        <div class="brand-text"><strong>whatdvd</strong><span>DVD 发种助手</span></div>
+        <button id="logout" type="button" class="icon-btn" title="退出登录" aria-label="退出登录"></button>
+      </div>
 
-    <main class="layout">
-      <section class="panel browser" aria-labelledby="browser-title">
-        <div class="panel-head">
-          <h2 id="browser-title">文件</h2>
-          <button id="browse-up" type="button" class="ghost small" disabled>上一级</button>
-        </div>
-        <p id="browse-path" class="path muted">允许浏览的目录</p>
+      <section class="side-section browse-section" aria-labelledby="browse-title">
+        <h2 id="browse-title" class="section-label">浏览</h2>
+        <nav id="crumbs" class="crumbs" aria-label="当前位置"></nav>
         <ul id="browse-list" class="entries"></ul>
-        <p id="browse-error" class="error" hidden></p>
+        <p id="browse-error" class="form-error" hidden></p>
       </section>
 
-      <div class="main-column">
-        <section class="panel" aria-labelledby="selection-title">
-          <div class="panel-head">
-            <h2 id="selection-title">已选择</h2>
-            <span id="selection-kind" class="badge" hidden></span>
-          </div>
-          <p id="selection-path" class="path">在左侧选择 DVD 文件夹、ISO，或包含多张盘的目录。</p>
+      <section class="side-section jobs-section" aria-labelledby="jobs-title">
+        <h2 id="jobs-title" class="section-label">任务 <span id="jobs-count" class="count"></span></h2>
+        <p id="jobs-empty" class="side-empty">还没有任务</p>
+        <ul id="jobs" class="jobs"></ul>
+      </section>
+    </aside>
 
-          <div class="actions">
-            <form id="run-form" class="action">
-              <h3>截图与 MediaInfo</h3>
-              <label for="run-count">每张盘截图数量</label>
+    <main class="workspace">
+      <section id="empty" class="empty-state">
+        <span class="disc-mark huge" aria-hidden="true"></span>
+        <h2>选择要处理的 DVD</h2>
+        <p>在左侧打开 DVD 文件夹、ISO，或包含多张盘的目录。</p>
+      </section>
+
+      <section id="source" class="source" hidden>
+        <header class="source-head">
+          <span id="source-kind" class="kind-tag"></span>
+          <h1 id="source-name"></h1>
+          <p id="source-path" class="source-path"></p>
+        </header>
+
+        <div class="tabs" role="tablist" aria-label="操作">
+          <button id="tab-run" type="button" role="tab" aria-selected="true" aria-controls="run-form">截图与 MediaInfo</button>
+          <button id="tab-torrent" type="button" role="tab" aria-selected="false" aria-controls="torrent-form">做种</button>
+        </div>
+
+        <form id="run-form" class="action-form" role="tabpanel" aria-labelledby="tab-run">
+          <div class="field narrow">
+            <label for="run-count">截图数量</label>
+            <div class="suffixed">
               <input id="run-count" type="number" min="1" max="100" value="10" required>
-              <label class="check"><input id="run-upload" type="checkbox" checked> 上传到 Pixhost 并生成发布说明</label>
-              <button type="submit" class="primary" disabled>开始生成</button>
-            </form>
-
-            <form id="torrent-form" class="action">
-              <h3>做种</h3>
-              <label for="torrent-announces">Tracker 地址（每行一个，可留空）</label>
-              <textarea id="torrent-announces" rows="3" spellcheck="false" placeholder="https://tracker.example/announce"></textarea>
-              <label for="torrent-piece">分块大小</label>
-              <select id="torrent-piece"></select>
-              <button type="submit" class="primary" disabled>开始做种</button>
-            </form>
+              <span>张 / 盘</span>
+            </div>
           </div>
-          <p id="submit-error" class="error" hidden></p>
-        </section>
+          <label class="switch">
+            <input id="run-upload" type="checkbox" checked>
+            <span class="switch-track" aria-hidden="true"></span>
+            <span class="switch-text">上传到 Pixhost 并生成发布说明</span>
+          </label>
+          <button type="submit" class="btn primary">开始生成</button>
+        </form>
 
-        <section class="panel" aria-labelledby="jobs-title">
-          <div class="panel-head"><h2 id="jobs-title">任务</h2></div>
-          <p id="jobs-empty" class="muted">还没有任务。</p>
-          <ul id="jobs" class="jobs"></ul>
-        </section>
-
-        <section id="job" class="panel" aria-labelledby="job-title" hidden>
-          <div class="panel-head">
-            <h2 id="job-title">任务详情</h2>
-            <span id="job-status" class="badge"></span>
+        <form id="torrent-form" class="action-form" role="tabpanel" aria-labelledby="tab-torrent" hidden>
+          <div class="field grow">
+            <label for="torrent-announces">Tracker 地址 <span class="hint">每行一个，可留空</span></label>
+            <textarea id="torrent-announces" rows="2" spellcheck="false" placeholder="https://tracker.example/announce"></textarea>
           </div>
-          <p id="job-path" class="path"></p>
-          <pre id="job-log" class="log" aria-label="日志"></pre>
-          <div id="job-result"></div>
-        </section>
-      </div>
+          <div class="field narrow">
+            <label for="torrent-piece">分块大小</label>
+            <select id="torrent-piece"></select>
+          </div>
+          <button type="submit" class="btn primary">开始做种</button>
+        </form>
+        <p id="submit-error" class="form-error" hidden></p>
+      </section>
+
+      <section id="job" class="job" aria-labelledby="job-title" hidden>
+        <header class="job-head">
+          <div class="job-heading">
+            <p id="job-kind" class="eyebrow"></p>
+            <h2 id="job-title"></h2>
+          </div>
+          <span id="job-status" class="status"></span>
+        </header>
+        <div id="job-progress" class="progress" hidden><span></span></div>
+        <div class="tabs compact" role="tablist" aria-label="任务内容">
+          <button id="jtab-result" type="button" role="tab" aria-selected="true" aria-controls="job-result">结果</button>
+          <button id="jtab-log" type="button" role="tab" aria-selected="false" aria-controls="job-log">日志 <span id="log-count" class="count"></span></button>
+        </div>
+        <div id="job-result" class="job-result" role="tabpanel" aria-labelledby="jtab-result"></div>
+        <pre id="job-log" class="log" role="tabpanel" aria-labelledby="jtab-log" hidden></pre>
+      </section>
     </main>
   </div>
 </body>
