@@ -71,6 +71,8 @@ def open_iso(runner: Runner, iso: Path, temp_root: Path | None = None) -> Iterat
     """
     vob, ifo = select_files(parse_listing(runner.run(["7z", "l", "-slt", iso]).stdout))
     name = iso.stem
+    if temp_root is not None:
+        temp_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="whatdvd-", dir=temp_root) as temp_dir:
         # 解析符号链接，保证 MediaInfo 输出的路径以 strip_prefix 开头。
         temp = str(Path(temp_dir).resolve())

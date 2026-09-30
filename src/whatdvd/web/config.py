@@ -16,7 +16,7 @@ from ..upload import PIXHOST_DOMAINS
 
 DEFAULT_CONFIG_PATH = Path("~/.config/whatdvd/config.toml")
 DEFAULT_OUTPUT_DIR = Path("~/.local/share/whatdvd/output")
-DEFAULT_PORT = 28090
+DEFAULT_PORT = 26873
 TOKEN_ENV = "WHATDVD_TOKEN"
 
 

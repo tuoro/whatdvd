@@ -1,0 +1,20 @@
+# 容器内使用的配置。路径都是容器内路径，对应 docker-compose.yml 中的挂载。
+# token 用环境变量 WHATDVD_TOKEN 设置；不设置则每次启动随机生成，用 docker logs whatdvd 查看登录链接。
+
+port = 26873
+roots = ["/media"]
+output_dir = "/output"
+# ISO 解包会临时写入约 1 GB 的 VOB，放在输出卷里，避免占用容器的可写层或内存
+temp_dir = "/output/.tmp"
+max_jobs = 1
+
+[screenshots]
+count = 10
+
+[pixhost]
+domain = "pixhost.to"
+proxy = ""
+
+[torrent]
+announces = []
+piece_length = 24

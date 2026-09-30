@@ -1,6 +1,6 @@
 PYTHON ?= .venv/bin/python
 
-.PHONY: dev test unit typecheck sample clean
+.PHONY: dev test unit typecheck sample docker clean
 
 dev:
 	python3 -m venv .venv
@@ -17,6 +17,9 @@ typecheck:
 
 sample:
 	$(PYTHON) tests/dvdgen.py sample-dvd
+
+docker:
+	docker build -t whatdvd:latest .
 
 clean:
 	rm -rf whatdvd-output sample-dvd .pytest_cache build dist

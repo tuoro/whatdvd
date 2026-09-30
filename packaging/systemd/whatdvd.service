@@ -1,0 +1,20 @@
+# systemd 用户服务：以当前用户运行 whatdvd Web 界面，不需要 root。
+# 安装步骤见 README 的“systemd 用户服务”一节。
+[Unit]
+Description=whatdvd DVD 发种助手 Web 界面
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# pipx 安装后的默认位置；装在别处时改成实际路径（which whatdvd）
+ExecStart=%h/.local/bin/whatdvd serve
+# 配置文件默认读取 ~/.config/whatdvd/config.toml；token 也可以放在环境变量里：
+# Environment=WHATDVD_TOKEN=改成一串随机字符
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+UMask=0027
+
+[Install]
+WantedBy=default.target

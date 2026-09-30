@@ -22,3 +22,62 @@ jobs:
         run: python -m mypy --strict src
       - name: 测试
         run: python -m pytest
+
+  docker:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: 构建镜像
+        run: docker build -t whatdvd:ci .
+      - name: 镜像内的外部命令
+        run: |
+          docker run --rm --entrypoint sh whatdvd:ci -c '
+            set -e
+            ffmpeg -hide_banner -version | head -1
+            mediainfo --version | tail -1
+            7z | sed -n 2p
+            mktorrent 2>&1 | sed -n 2p
+            id
+            whatdvd --help >/dev/null'
+      - name: 生成测试 DVD 和 ISO
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg mediainfo dvdauthor genisoimage
+          python3 tests/dvdgen.py /tmp/media
+          cd "/tmp/media/Sample Movie (2001)" && genisoimage -quiet -dvd-video -o "/tmp/media/Disc One.iso" "Disc 1"
+          mkdir -p /tmp/out && chmod 777 /tmp/out
+      - name: 在容器里截图（Debian 12 自带的 ffmpeg）
+        run: |
+          run() { docker run --rm --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
+            -v /tmp/media:/media:ro -v /tmp/out:/output whatdvd:ci "$@"; }
+          run run "/media/Sample Movie (2001)" -n 1 --no-upload -o /output
+          run run "/media/Disc One.iso" -n 1 --no-upload -o /output --temp-dir /output/.tmp
+          run torrent "/media/Sample Movie (2001)" -o /output
+          python3 - <<'PY'
+          import struct, pathlib
+          out = pathlib.Path("/tmp/out")
+          def size(name):
+              data = (out / name).read_bytes()[:24]
+              return struct.unpack(">II", data[16:24])
+          assert size("Disc.1.VTS_02_1.VOB.scr1.png") == (1024, 576)
+          assert size("Disc.2.VTS_01_1.VOB.scr1.png") == (720, 540)
+          assert size("Disc.One.VTS_02_1.VOB.scr1.png") == (1024, 576)
+          assert "Disc One/VIDEO_TS/VTS_02_1.VOB" in (out / "Disc.One.VTS_02_1.VOB.mediainfo.txt").read_text()
+          assert (out / "Sample.Movie.2001.torrent").stat().st_size > 0
+          assert not any((out / ".tmp").iterdir())
+          print("ok")
+          PY
+      - name: Web 服务
+        run: |
+          docker run -d --name web --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges:true \
+            -p 127.0.0.1:26873:26873 -e WHATDVD_TOKEN=ci-token \
+            -v /tmp/media:/media:ro -v /tmp/out:/output whatdvd:ci
+          for i in $(seq 1 30); do
+            [ "$(docker inspect -f '{{.State.Health.Status}}' web)" = healthy ] && break
+            sleep 2
+          done
+          docker inspect -f '{{.State.Health.Status}}' web | grep -qx healthy
+          curl -fsS http://127.0.0.1:26873/ | grep -q whatdvd
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:26873/api/config)" = 401
+          curl -fsS -H "Authorization: Bearer ci-token" http://127.0.0.1:26873/api/config | grep -q '"/media"'
+          docker logs web

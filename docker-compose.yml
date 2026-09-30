@@ -1,0 +1,25 @@
+services:
+  whatdvd:
+    build: .
+    image: whatdvd:latest
+    container_name: whatdvd
+    # 与宿主机上媒体文件的属主一致，保证能读取媒体、写入输出目录
+    user: "1000:1000"
+    ports:
+      # 只映射到宿主机本机；远程访问请用 SSH 隧道或 HTTPS 反向代理
+      - "127.0.0.1:26873:26873"
+    environment:
+      WHATDVD_TOKEN: "改成一串随机字符"
+    volumes:
+      - /path/to/downloads:/media:ro
+      - ./output:/output
+      # 需要改配置时再挂载自己的文件：
+      # - ./config.toml:/config/config.toml:ro
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped

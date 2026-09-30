@@ -1,0 +1,13 @@
+.git
+.github
+.venv
+.pytest_cache
+.mypy_cache
+**/__pycache__
+build
+dist
+whatdvd-output
+sample-dvd
+output
+tests
+CLAUDE.md

@@ -257,7 +257,7 @@ def test_source_summary(authed: TestClient, media: Path) -> None:
 
 def test_config_includes_settings_fields(authed: TestClient) -> None:
     data = authed.get("/api/config").json()
-    assert data["listen"] == "127.0.0.1:28090"
+    assert data["listen"] == "127.0.0.1:26873"
     assert data["max_jobs"] == 1 and data["custom_template"] is False and data["proxy"] is False
 
 

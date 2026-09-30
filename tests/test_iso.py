@@ -136,3 +136,11 @@ def test_open_iso_rejects_unsafe_paths(tmp_path: Path) -> None:
     runner = FakeRunner(lambda argv: ok(argv, listing))
     with pytest.raises(ScanError, match="不安全"), open_iso(runner, iso, temp_root=tmp_path):
         pass
+
+
+def test_open_iso_creates_missing_temp_root(tmp_path: Path) -> None:
+    iso = make_file(tmp_path / "Disc 1.iso", 1)
+    temp_root = tmp_path / "output" / ".tmp"
+    with open_iso(FakeRunner(_fake_7z), iso, temp_root=temp_root) as disc:
+        assert disc.vob.is_relative_to(temp_root.resolve())
+    assert temp_root.is_dir() and not any(temp_root.iterdir())

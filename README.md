@@ -9,7 +9,7 @@ DVD 发种助手：把 DVD（VIDEO_TS 文件夹或 ISO）整理成发布所需�
 - 第 1 阶段（完成）：识别 DVD、生成 MediaInfo 和截图
 - 第 2 阶段（完成）：ISO 按需解包、mktorrent 做种、Pixhost 上传、发布说明
 - 第 3 阶段（完成）：Web 界面
-- 第 4 阶段：Docker / systemd 打包
+- 第 4 阶段（完成）：Docker 镜像、systemd 用户服务
 
 ## 运行环境
 
@@ -51,11 +51,45 @@ cp config.example.toml ~/.config/whatdvd/config.toml   # 至少改 roots 和 tok
 whatdvd serve                                           # 或 whatdvd serve --root ~/downloads
 ```
 
-- 默认只监听 `127.0.0.1:28090`。远程使用时通过 SSH 隧道（`ssh -L 28090:127.0.0.1:28090 盒子`）或 HTTPS 反向代理访问，不要直接暴露到公网。
+- 默认只监听 `127.0.0.1:26873`。远程使用时通过 SSH 隧道（`ssh -L 26873:127.0.0.1:26873 盒子`）或 HTTPS 反向代理访问，不要直接暴露到公网。
 - 需要 token 登录。配置里不写 token 时，每次启动随机生成一个，并在终端打印带 token 的登录链接。
 - 只能浏览和处理 `roots` 中的目录；指向这些目录以外的符号链接不会显示，也无法访问。
 - 界面中可以选择 DVD 文件夹、ISO 或包含多张盘的目录，生成截图和 MediaInfo（上传图床并生成发布说明），或者做种；日志实时显示，发布说明和 MediaInfo 可一键复制，种子可直接下载。
 - 任务排队执行，默认同一时间只运行一个（`max_jobs`）。任务记录保存在内存中，重启服务后清空，输出文件保留在 `output_dir`。
+
+## Docker
+
+镜像基于 Debian 12，以普通用户（uid 1000）运行，不需要 `privileged`，也不 mount ISO。
+
+```bash
+git clone https://github.com/tuoro/whatdvd && cd whatdvd
+# 编辑 docker-compose.yml：媒体目录、WHATDVD_TOKEN、user（与媒体文件属主一致）
+docker compose up -d --build
+```
+
+- 端口只映射到宿主机 `127.0.0.1:26873`，远程访问用 SSH 隧道：`ssh -L 26873:127.0.0.1:26873 盒子`，然后打开 `http://127.0.0.1:26873`。
+- 媒体目录只读挂载到 `/media`；输出（截图、MediaInfo、发布说明、种子）在 `./output`，ISO 解包的临时文件也放在这里的 `.tmp` 中，用完即删。
+- 容器根文件系统只读，去掉所有 capability，并禁止提权。
+- 需要改配置时，复制 `docker/config.toml`，改好后按 `docker-compose.yml` 中的注释挂载进去。
+- 也可以用镜像跑命令行：`docker compose run --rm whatdvd run /media/某部片 --no-upload -o /output`。
+
+## systemd 用户服务
+
+不用 Docker 时，可以用 pipx 安装，再交给 systemd 以当前用户身份常驻：
+
+```bash
+sudo apt install pipx ffmpeg mediainfo p7zip-full mktorrent
+pipx install git+https://github.com/tuoro/whatdvd
+mkdir -p ~/.config/whatdvd ~/.config/systemd/user
+cp config.example.toml ~/.config/whatdvd/config.toml      # 改 roots 和 token
+cp packaging/systemd/whatdvd.service ~/.config/systemd/user/
+systemctl --user daemon-reload
+systemctl --user enable --now whatdvd
+sudo loginctl enable-linger "$USER"                      # 退出登录后继续运行
+journalctl --user -u whatdvd -f                          # 查看日志
+```
+
+升级：`pipx upgrade whatdvd && systemctl --user restart whatdvd`。
 
 ## 规则摘要（同 jietu / zuozhong）
 

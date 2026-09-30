@@ -104,5 +104,5 @@ def test_missing_explicit_config_file(tmp_path: Path) -> None:
 def test_example_config_is_valid(tmp_path: Path) -> None:
     example = Path(__file__).parent.parent / "config.example.toml"
     config = load_config(example, roots=[tmp_path])
-    assert config.host == "127.0.0.1" and config.port == 28090
+    assert config.host == "127.0.0.1" and config.port == 26873
     assert config.piece_length == 24 and config.proxy is None
