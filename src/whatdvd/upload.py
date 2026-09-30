@@ -20,6 +20,10 @@ class UploadError(RuntimeError):
     pass
 
 
+class HostUnreachable(UploadError):
+    """连不上图床（连接失败或超时）。之后的截图不再尝试，避免逐张空等。"""
+
+
 @dataclass(frozen=True)
 class UploadedImage:
     direct_url: str
@@ -55,7 +59,7 @@ class Pixhost:
         domain: str = "pixhost.to",
         *,
         proxy: str | None = None,
-        timeout: float = 120.0,
+        timeout: httpx.Timeout | float = httpx.Timeout(120.0, connect=15.0),
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         if domain not in PIXHOST_DOMAINS:
@@ -72,8 +76,10 @@ class Pixhost:
                     data={"content_type": "0", "max_th_size": "420"},
                     headers={"Accept": "application/json"},
                 )
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ProxyError) as error:
+            raise HostUnreachable(f"连不上 Pixhost：{error or type(error).__name__}") from error
         except httpx.HTTPError as error:
-            raise UploadError(f"连接 Pixhost 失败：{error}") from error
+            raise UploadError(f"上传到 Pixhost 失败：{error or type(error).__name__}") from error
         if not response.is_success:
             raise UploadError(f"Pixhost 返回 HTTP {response.status_code}")
         try:
@@ -96,22 +102,42 @@ class UploadResult:
     path: Path
     image: UploadedImage | None
     error: str | None = None
+    unreachable: bool = False
+
+
+UploadProgress = Callable[[str, bool], None]
+"""上传日志：finished 为 True 表示这张图处理完毕（成功、失败或跳过）。"""
+
+
+def skip_all(paths: Sequence[Path], progress: UploadProgress) -> list[UploadResult]:
+    """连不上图床后，其余截图直接记为失败。"""
+    results: list[UploadResult] = []
+    for path in paths:
+        progress(f"{path.name} 未上传：连不上图床", True)
+        results.append(UploadResult(path=path, image=None, error="连不上图床", unreachable=True))
+    return results
 
 
 def upload_all(
     host: ImageHost,
     paths: Sequence[Path],
-    progress: Callable[[str], None] = lambda _: None,
+    progress: UploadProgress = lambda message, finished: None,
 ) -> list[UploadResult]:
-    """逐张上传，单张失败不影响其余。"""
+    """逐张上传，单张失败不影响其余；连不上图床时其余的不再尝试，记为失败。"""
     results: list[UploadResult] = []
-    for path in paths:
+    for index, path in enumerate(paths):
+        progress(f"{path.name} 上传中…", False)
         try:
             image = host.upload(path)
+        except HostUnreachable as error:
+            progress(f"{path.name} 上传失败：{error}", True)
+            results.append(UploadResult(path=path, image=None, error=str(error), unreachable=True))
+            results.extend(skip_all(paths[index + 1 :], progress))
+            break
         except UploadError as error:
-            progress(f"{path.name} 上传失败：{error}")
+            progress(f"{path.name} 上传失败：{error}", True)
             results.append(UploadResult(path=path, image=None, error=str(error)))
             continue
-        progress(f"{path.name} 上传完成：{image.direct_url}")
+        progress(f"{path.name} 上传完成：{image.direct_url}", True)
         results.append(UploadResult(path=path, image=image))
     return results

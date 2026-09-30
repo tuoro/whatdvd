@@ -14,7 +14,7 @@ from .post import DEFAULT_TEMPLATE, PostDisc, render_post
 from .probe import ProbeError
 from .runner import CommandError, Runner
 from .sources import find_sources, is_iso, open_disc
-from .upload import ImageHost, UploadResult, upload_all
+from .upload import ImageHost, UploadResult, skip_all, upload_all
 
 MEDIA_TOOLS = ("ffmpeg", "ffprobe", "mediainfo")
 
@@ -138,6 +138,8 @@ def _process_discs(runner: Runner, path: Path, options: RunOptions, reporter: Re
     for source in sources:
         result = DiscResult(source=source, label=source.name if is_iso(source) else source.parent.name)
         results.append(result)
+        if is_iso(source):
+            reporter.info(f"正在从 {source.name} 解包选中的 VOB 和 IFO，文件大时需要几分钟…")
         try:
             with open_disc(runner, source, path, options.temp_dir) as disc:
                 result.analysis = analyze(runner, disc, options.aspect)
@@ -175,19 +177,19 @@ def _upload_and_post(
         return None
     reporter.info("[上传截图到图床]")
 
-    def step(message: str) -> None:
+    def step(message: str, finished: bool) -> None:
         reporter.info(f"  {message}")
-        steps.tick()
+        if finished:
+            steps.tick()
 
     host = host_factory()
     try:
+        unreachable = False
         for disc in done:
             assert disc.output is not None
-            disc.uploads = upload_all(
-                host,
-                [shot.path for shot in disc.output.shots if shot.ok],
-                step,
-            )
+            paths = [shot.path for shot in disc.output.shots if shot.ok]
+            disc.uploads = skip_all(paths, step) if unreachable else upload_all(host, paths, step)
+            unreachable = unreachable or any(upload.unreachable for upload in disc.uploads)
     finally:
         host.close()
 

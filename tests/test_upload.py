@@ -3,7 +3,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from whatdvd.upload import Pixhost, UploadedImage, UploadError, pixhost_direct_url, upload_all
+from whatdvd.upload import HostUnreachable, Pixhost, UploadedImage, UploadError, pixhost_direct_url, upload_all
 
 
 @pytest.mark.parametrize(
@@ -91,8 +91,17 @@ def test_upload_connection_error(tmp_path: Path) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused", request=request)
 
-    with pytest.raises(UploadError, match="连接 Pixhost 失败"):
+    with pytest.raises(HostUnreachable, match="连不上 Pixhost：refused"):
         Pixhost(transport=httpx.MockTransport(handler)).upload(_png(tmp_path))
+
+
+def test_upload_read_timeout_fails_only_this_image(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ReadTimeout("timed out", request=request)
+
+    with pytest.raises(UploadError, match="上传到 Pixhost 失败") as info:
+        Pixhost(transport=httpx.MockTransport(handler)).upload(_png(tmp_path))
+    assert not isinstance(info.value, HostUnreachable)
 
 
 class FlakyHost:
@@ -107,7 +116,39 @@ class FlakyHost:
 def test_upload_all_continues_after_failure() -> None:
     messages: list[str] = []
     paths = [Path("a.scr01.png"), Path("a.scr02.png"), Path("a.scr03.png")]
-    results = upload_all(FlakyHost(), paths, messages.append)
+    results = upload_all(FlakyHost(), paths, lambda message, finished: messages.append(message))
     assert [r.image is not None for r in results] == [True, False, True]
     assert results[1].error == "boom"
+    assert "a.scr02.png 上传中…" in messages
     assert "a.scr02.png 上传失败：boom" in messages
+
+
+class DeadHost:
+    name = "Dead"
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def upload(self, path: Path) -> UploadedImage:
+        self.calls += 1
+        raise HostUnreachable("连不上 Pixhost：timed out")
+
+
+def test_upload_all_stops_when_host_unreachable() -> None:
+    host = DeadHost()
+    events: list[tuple[str, bool]] = []
+    paths = [Path(f"a.scr0{i}.png") for i in (1, 2, 3)]
+    results = upload_all(host, paths, lambda message, finished: events.append((message, finished)))
+    assert host.calls == 1  # 第一张连不上后不再尝试
+    assert [r.unreachable for r in results] == [True, True, True]
+    assert all(r.image is None for r in results)
+    assert sum(finished for _, finished in events) == 3  # 每张都算处理完，进度能走到头
+    assert ("a.scr03.png 未上传：连不上图床", True) in events
+
+
+def test_pixhost_connect_timeout_is_unreachable(tmp_path: Path) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("timed out", request=request)
+
+    with pytest.raises(HostUnreachable, match="连不上 Pixhost"):
+        Pixhost(transport=httpx.MockTransport(handler)).upload(_png(tmp_path))
