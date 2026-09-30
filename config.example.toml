@@ -1,0 +1,36 @@
+# whatdvd Web 界面配置示例
+# 复制到 ~/.config/whatdvd/config.toml，或用 whatdvd serve -c 指定路径。
+
+# 默认只监听本机。远程访问请用 SSH 隧道或 HTTPS 反向代理，不要直接暴露到公网。
+host = "127.0.0.1"
+port = 28090
+
+# 登录用的 token。留空时每次启动随机生成并打印在终端；也可以用环境变量 WHATDVD_TOKEN。
+# 生成一个：python3 -c "import secrets; print(secrets.token_urlsafe(24))"
+token = ""
+
+# 允许在界面中浏览和处理的目录，界面无法访问这些目录以外的文件
+roots = ["~/downloads"]
+
+# 截图、MediaInfo、发布说明和种子的输出目录，每个任务在其中按名称建子目录
+output_dir = "~/.local/share/whatdvd/output"
+
+# ISO 解包用的临时目录；留空用系统临时目录。解包会写入约 1 GB 的 VOB，/tmp 空间小时请指定
+temp_dir = ""
+
+# 同时运行的任务数
+max_jobs = 1
+
+[screenshots]
+count = 10
+
+[pixhost]
+domain = "pixhost.to"   # 或备用域名 pixhost.cc
+proxy = ""              # 例如 http://127.0.0.1:7890
+
+[torrent]
+announces = []          # 做种表单里预填的 Tracker 地址
+piece_length = 24       # 2^24 = 16 MiB，同 zuozhong
+
+[post]
+template = ""           # 发布说明模板文件；留空用默认 BBCode。变量：$name、$mediainfo、$screenshots

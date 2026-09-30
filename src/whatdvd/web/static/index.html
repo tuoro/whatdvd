@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>whatdvd</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <div id="login" class="login" hidden>
+    <form id="login-form" class="login-card">
+      <h1>whatdvd</h1>
+      <p class="muted">DVD 发种助手。请输入启动时设置或打印的 token。</p>
+      <label for="login-token">Token</label>
+      <input id="login-token" type="password" autocomplete="current-password" required>
+      <p id="login-error" class="error" hidden></p>
+      <button type="submit" class="primary">登录</button>
+    </form>
+  </div>
+
+  <div id="app" hidden>
+    <header class="topbar">
+      <div class="brand"><strong>whatdvd</strong><span class="muted">DVD 发种助手</span></div>
+      <button id="logout" type="button" class="ghost">退出登录</button>
+    </header>
+
+    <main class="layout">
+      <section class="panel browser" aria-labelledby="browser-title">
+        <div class="panel-head">
+          <h2 id="browser-title">文件</h2>
+          <button id="browse-up" type="button" class="ghost small" disabled>上一级</button>
+        </div>
+        <p id="browse-path" class="path muted">允许浏览的目录</p>
+        <ul id="browse-list" class="entries"></ul>
+        <p id="browse-error" class="error" hidden></p>
+      </section>
+
+      <div class="main-column">
+        <section class="panel" aria-labelledby="selection-title">
+          <div class="panel-head">
+            <h2 id="selection-title">已选择</h2>
+            <span id="selection-kind" class="badge" hidden></span>
+          </div>
+          <p id="selection-path" class="path">在左侧选择 DVD 文件夹、ISO，或包含多张盘的目录。</p>
+
+          <div class="actions">
+            <form id="run-form" class="action">
+              <h3>截图与 MediaInfo</h3>
+              <label for="run-count">每张盘截图数量</label>
+              <input id="run-count" type="number" min="1" max="100" value="10" required>
+              <label class="check"><input id="run-upload" type="checkbox" checked> 上传到 Pixhost 并生成发布说明</label>
+              <button type="submit" class="primary" disabled>开始生成</button>
+            </form>
+
+            <form id="torrent-form" class="action">
+              <h3>做种</h3>
+              <label for="torrent-announces">Tracker 地址（每行一个，可留空）</label>
+              <textarea id="torrent-announces" rows="3" spellcheck="false" placeholder="https://tracker.example/announce"></textarea>
+              <label for="torrent-piece">分块大小</label>
+              <select id="torrent-piece"></select>
+              <button type="submit" class="primary" disabled>开始做种</button>
+            </form>
+          </div>
+          <p id="submit-error" class="error" hidden></p>
+        </section>
+
+        <section class="panel" aria-labelledby="jobs-title">
+          <div class="panel-head"><h2 id="jobs-title">任务</h2></div>
+          <p id="jobs-empty" class="muted">还没有任务。</p>
+          <ul id="jobs" class="jobs"></ul>
+        </section>
+
+        <section id="job" class="panel" aria-labelledby="job-title" hidden>
+          <div class="panel-head">
+            <h2 id="job-title">任务详情</h2>
+            <span id="job-status" class="badge"></span>
+          </div>
+          <p id="job-path" class="path"></p>
+          <pre id="job-log" class="log" aria-label="日志"></pre>
+          <div id="job-result"></div>
+        </section>
+      </div>
+    </main>
+  </div>
+</body>
+</html>

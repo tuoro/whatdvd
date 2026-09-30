@@ -8,7 +8,7 @@ DVD 发种助手：把 DVD（VIDEO_TS 文件夹或 ISO）整理成发布所需�
 
 - 第 1 阶段（完成）：识别 DVD、生成 MediaInfo 和截图
 - 第 2 阶段（完成）：ISO 按需解包、mktorrent 做种、Pixhost 上传、发布说明
-- 第 3 阶段：Web 界面
+- 第 3 阶段（完成）：Web 界面
 - 第 4 阶段：Docker / systemd 打包
 
 ## 运行环境
@@ -41,6 +41,21 @@ whatdvd torrent "/path/to/Movie Name (2001)" -a "https://tracker.example/announc
 - 截图必须全部上传成功才会生成发布说明 `<名称>.post.txt`。`--no-upload` 跳过上传，也不生成发布说明。
 - 发布说明默认是 BBCode，可用 `--template` 指定模板文件，模板变量为 `$name`、`$mediainfo`、`$screenshots`，每张盘套用一次。
 - Pixhost 可用 `--pixhost-domain pixhost.cc` 换备用域名，用 `--proxy` 走代理。
+
+## Web 界面
+
+盒子通常没有桌面环境，可以用浏览器操作：
+
+```bash
+cp config.example.toml ~/.config/whatdvd/config.toml   # 至少改 roots 和 token
+whatdvd serve                                           # 或 whatdvd serve --root ~/downloads
+```
+
+- 默认只监听 `127.0.0.1:28090`。远程使用时通过 SSH 隧道（`ssh -L 28090:127.0.0.1:28090 盒子`）或 HTTPS 反向代理访问，不要直接暴露到公网。
+- 需要 token 登录。配置里不写 token 时，每次启动随机生成一个，并在终端打印带 token 的登录链接。
+- 只能浏览和处理 `roots` 中的目录；指向这些目录以外的符号链接不会显示，也无法访问。
+- 界面中可以选择 DVD 文件夹、ISO 或包含多张盘的目录，生成截图和 MediaInfo（上传图床并生成发布说明），或者做种；日志实时显示，发布说明和 MediaInfo 可一键复制，种子可直接下载。
+- 任务排队执行，默认同一时间只运行一个（`max_jobs`）。任务记录保存在内存中，重启服务后清空，输出文件保留在 `output_dir`。
 
 ## 规则摘要（同 jietu / zuozhong）
 

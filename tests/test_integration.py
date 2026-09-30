@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 import struct
+import time
 from pathlib import Path
 
 import pytest
@@ -169,3 +170,36 @@ def test_torrent_without_announce(movie: Path, tmp_path: Path) -> None:
     assert isinstance(torrent, dict)
     assert b"announce" not in torrent
     assert torrent[b"info"][b"piece length"] == 2**20
+
+
+def test_web_run(movie: Path, tmp_path: Path) -> None:
+    from fastapi.testclient import TestClient
+
+    from whatdvd.web.app import create_app
+    from whatdvd.web.config import ServerConfig
+
+    FakePixhost.uploaded = []
+    config = ServerConfig(roots=(movie.parent.resolve(),), output_dir=tmp_path / "out", token="t")
+    app = create_app(config, host_factory=lambda: FakePixhost("pixhost.to"))
+    with TestClient(app, headers={"Authorization": "Bearer t"}) as client:
+        body = {"kind": "run", "path": str(movie / "Disc 1"), "count": 3, "upload": True}
+        job_id = client.post("/api/jobs", json=body).json()["id"]
+        for _ in range(600):
+            job = client.get(f"/api/jobs/{job_id}").json()
+            if job["status"] in ("done", "failed"):
+                break
+            time.sleep(0.1)
+        assert job["status"] == "done" and job["ok"] is True, job
+        result = job["result"]
+        disc = result["discs"][0]
+        assert (disc["name"], disc["vob"], disc["size"]) == ("Disc 1", "VTS_02_1.VOB", [1024, 576])
+        assert [s["ok"] for s in disc["screenshots"]] == [True, True, True]
+        assert disc["screenshots"][0]["url"] == "https://img1.pixhost.to/images/1/Disc.1.VTS_02_1.VOB.scr1.png"
+        assert result["post"].startswith("[b]Disc 1[/b]")
+        assert result["post_file"] == "Disc.1.post.txt"
+
+        image = client.get(f"/api/jobs/{job_id}/files/Disc.1.VTS_02_1.VOB.scr1.png")
+        assert image.status_code == 200 and image.headers["content-type"] == "image/png"
+        report = client.get(f"/api/jobs/{job_id}/files/{disc['mediainfo_file']}")
+        assert report.headers["content-type"].startswith("text/plain")
+        assert "Complete name" in report.text
