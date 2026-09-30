@@ -32,8 +32,8 @@ def test_find_sources_errors(tmp_path: Path) -> None:
         find_sources(tmp_path / "missing")
 
 
-def test_open_disc_folder_strips_input_parent(tmp_path: Path, fake_runner: type) -> None:
+def test_open_disc_folder_uses_input_parent(tmp_path: Path, fake_runner: type) -> None:
     video_ts = make_file(tmp_path / "Movie" / "Disc 1" / "VIDEO_TS" / "VTS_01_1.VOB", 10).parent
     with open_disc(fake_runner(), video_ts, tmp_path / "Movie") as disc:
-        assert disc.strip_prefix == f"{tmp_path}/"
+        assert disc.mediainfo_root == tmp_path
         assert disc.name == "Disc 1"

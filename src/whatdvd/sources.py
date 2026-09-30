@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -44,10 +43,10 @@ def find_sources(path: Path) -> list[Path]:
 def open_disc(runner: Runner, source: Path, input_path: Path, temp_root: Path | None = None) -> Iterator[Disc]:
     """ISO 解包到临时目录，离开 with 块时清理；文件夹直接读取。
 
-    文件夹的 MediaInfo 删除 "输入路径的上级目录/" 前缀，同 jietu。
+    文件夹的 MediaInfo 在输入路径的上级目录运行，路径相对于它，同 jietu。
     """
     if is_iso(source):
         with open_iso(runner, source, temp_root) as disc:
             yield disc
     else:
-        yield scan_disc(source, os.path.join(str(input_path.absolute().parent), ""))
+        yield scan_disc(source, input_path.absolute().parent)

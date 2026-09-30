@@ -1,20 +1,30 @@
-"""MediaInfo 报告，格式同 jietu：VOB 在前，IFO 在后，写进同一个文件。"""
+"""MediaInfo 报告，格式同 jietu：VOB 在前，IFO 在后，写进同一个文件。
+
+jietu 事后用 sed 删除路径前缀；这里改为在基准目录下用相对路径运行 mediainfo，
+效果相同（Complete name 显示为 <盘名>/VIDEO_TS/…），输出保持未经修改。
+"""
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from .runner import Runner
 
 
-def strip_path_prefix(text: str, prefix: str) -> str:
-    """同 jietu 的 `sed "s|${FileLoc}/||"`：每行只删除第一处。"""
-    return "\n".join(line.replace(prefix, "", 1) for line in text.split("\n"))
+def relative_arg(path: Path, root: Path) -> str:
+    """path 在 root 之下时返回相对路径，否则返回原路径；以 "-" 开头时加 "./"，避免被当成选项。"""
+    arg = str(path.relative_to(root)) if path.is_relative_to(root) else str(path)
+    return f"./{arg}" if arg.startswith("-") else arg
 
 
-def build_report(runner: Runner, vob: Path, ifo: Path | None, strip_prefix: str) -> str:
-    report = runner.run(["mediainfo", vob]).stdout
+def mediainfo(runner: Runner, path: Path, root: Path) -> str:
+    return runner.run(["mediainfo", relative_arg(path, root)], cwd=root).stdout
+
+
+def build_report(runner: Runner, vob: Path, ifo: Path | None, root: Path) -> str:
+    report = mediainfo(runner, vob, root)
     if ifo is not None:
         # jietu 用 `echo -e "\n\n"` 分隔，写出的是三个换行符。
-        report += "\n\n\n" + runner.run(["mediainfo", ifo]).stdout
-    return strip_path_prefix(report, strip_prefix)
+        report += "\n\n\n" + mediainfo(runner, ifo, root)
+    return report

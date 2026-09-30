@@ -10,6 +10,7 @@ import shutil
 import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol
 
 Arg = str | os.PathLike[str]
@@ -32,15 +33,15 @@ class CommandError(RuntimeError):
 
 
 class Runner(Protocol):
-    def run(self, args: Sequence[Arg], *, check: bool = True) -> CommandResult: ...
+    def run(self, args: Sequence[Arg], *, check: bool = True, cwd: Path | None = None) -> CommandResult: ...
 
     def which(self, name: str) -> str | None: ...
 
 
 class SubprocessRunner:
-    def run(self, args: Sequence[Arg], *, check: bool = True) -> CommandResult:
+    def run(self, args: Sequence[Arg], *, check: bool = True, cwd: Path | None = None) -> CommandResult:
         argv = tuple(os.fspath(arg) for arg in args)
-        proc = subprocess.run(argv, capture_output=True, stdin=subprocess.DEVNULL)
+        proc = subprocess.run(argv, capture_output=True, stdin=subprocess.DEVNULL, cwd=cwd)
         result = CommandResult(
             args=argv,
             returncode=proc.returncode,

@@ -20,12 +20,14 @@ class FakeRunner:
 
     def __init__(self, handler: Handler | None = None, available: Iterable[str] = ()) -> None:
         self.calls: list[tuple[str, ...]] = []
+        self.cwds: list[Path | None] = []
         self.handler = handler or ok
         self.available = set(available)
 
-    def run(self, args: Sequence[Arg], *, check: bool = True) -> CommandResult:
+    def run(self, args: Sequence[Arg], *, check: bool = True, cwd: Path | None = None) -> CommandResult:
         argv = tuple(os.fspath(arg) for arg in args)
         self.calls.append(argv)
+        self.cwds.append(cwd)
         result = self.handler(argv)
         if check and result.returncode != 0:
             raise CommandError(result)

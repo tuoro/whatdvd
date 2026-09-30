@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import os
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -74,9 +73,9 @@ def open_iso(runner: Runner, iso: Path, temp_root: Path | None = None) -> Iterat
     if temp_root is not None:
         temp_root.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="whatdvd-", dir=temp_root) as temp_dir:
-        # 解析符号链接，保证 MediaInfo 输出的路径以 strip_prefix 开头。
-        temp = str(Path(temp_dir).resolve())
-        target = Path(temp) / name
+        # 解析符号链接，保证解出的文件都在 temp 之下，MediaInfo 用相对路径。
+        temp = Path(temp_dir).resolve()
+        target = temp / name
         wanted = [vob] if ifo is None else [vob, ifo]
         paths = [_extracted_path(target, entry) for entry in wanted]
         runner.run(["7z", "x", "-y", "-bso0", "-bsp0", f"-o{target}", iso, *(e.path for e in wanted)])
@@ -89,5 +88,5 @@ def open_iso(runner: Runner, iso: Path, temp_root: Path | None = None) -> Iterat
             vob=paths[0],
             ifo=paths[1] if ifo is not None else None,
             total_bytes=iso.stat().st_size,
-            strip_prefix=os.path.join(temp, ""),
+            mediainfo_root=temp,
         )

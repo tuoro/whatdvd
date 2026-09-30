@@ -28,8 +28,8 @@ class Disc:
     ifo: Path | None
     total_bytes: int
     """文件夹为 VIDEO_TS 内文件总和，ISO 为 ISO 文件大小。"""
-    strip_prefix: str
-    """MediaInfo 中要删除的路径前缀（jietu 的 "${FileLoc}/"）。"""
+    mediainfo_root: Path
+    """运行 mediainfo 的目录（jietu 的 "${FileLoc}"），MediaInfo 中的路径相对于它。"""
 
     @property
     def file_title(self) -> str:
@@ -64,7 +64,7 @@ def is_ifo(name: str) -> bool:
     return name.upper().endswith(".IFO")
 
 
-def scan_disc(video_ts: Path, strip_prefix: str) -> Disc:
+def scan_disc(video_ts: Path, mediainfo_root: Path) -> Disc:
     files = [p for p in video_ts.iterdir() if p.is_file()]
     vob = largest_file(files)
     if vob is None:
@@ -77,7 +77,7 @@ def scan_disc(video_ts: Path, strip_prefix: str) -> Disc:
         vob=vob,
         ifo=largest_file(p for p in files if is_ifo(p.name)),
         total_bytes=sum(p.stat().st_size for p in files),
-        strip_prefix=strip_prefix,
+        mediainfo_root=mediainfo_root,
     )
 
 

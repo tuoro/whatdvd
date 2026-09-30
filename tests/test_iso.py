@@ -117,9 +117,8 @@ def test_open_iso_extracts_only_selected_files_and_cleans_up(tmp_path: Path) -> 
         assert disc.vob.is_file() and disc.vob.name == "VTS_02_1.VOB"
         assert disc.ifo is not None and disc.ifo.name == "VTS_01_0.IFO"
         assert disc.total_bytes == 20_854_784
-        assert str(disc.vob).startswith(disc.strip_prefix)
-        assert str(disc.vob)[len(disc.strip_prefix) :] == "Disc 1/VIDEO_TS/VTS_02_1.VOB"
-        temp = Path(disc.strip_prefix)
+        assert disc.vob.relative_to(disc.mediainfo_root).as_posix() == "Disc 1/VIDEO_TS/VTS_02_1.VOB"
+        temp = disc.mediainfo_root
     assert not temp.exists()
 
 
