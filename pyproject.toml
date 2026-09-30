@@ -1,0 +1,28 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "whatdvd"
+version = "0.1.0"
+description = "DVD 发种助手：为 VIDEO_TS 生成截图、MediaInfo、种子和发布说明"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.scripts]
+whatdvd = "whatdvd.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/whatdvd"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: 需要 ffmpeg、ffprobe、mediainfo、dvdauthor 等外部命令",
+]
