@@ -5,15 +5,17 @@ build-backend = "hatchling.build"
 [project]
 name = "whatdvd"
 version = "0.1.0"
-description = "DVD 发种助手：为 VIDEO_TS 生成截图、MediaInfo、种子和发布说明"
+description = "DVD 发种助手：为 VIDEO_TS 或 ISO 生成截图、MediaInfo、种子和发布说明"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "httpx>=0.27",
+]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "mypy>=1.10"]
 
 [project.scripts]
 whatdvd = "whatdvd.cli:main"

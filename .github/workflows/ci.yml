@@ -15,8 +15,10 @@ jobs:
       - name: 安装外部命令
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg mediainfo dvdauthor
+          sudo apt-get install -y --no-install-recommends ffmpeg mediainfo dvdauthor genisoimage p7zip-full mktorrent
       - name: 安装项目
         run: python -m pip install -e ".[dev]"
+      - name: 类型检查
+        run: python -m mypy --strict src
       - name: 测试
         run: python -m pytest

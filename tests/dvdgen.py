@@ -55,6 +55,16 @@ def make_disc(disc_dir: Path, standard: str, titles: Sequence[Title], work_dir: 
     return disc_dir / "VIDEO_TS"
 
 
+def make_iso(disc_dir: Path, iso: Path) -> Path:
+    """用 genisoimage 打包成 DVD-Video ISO（UDF + ISO 9660）。"""
+    subprocess.run(
+        ["genisoimage", "-quiet", "-dvd-video", "-V", "WHATDVD", "-o", iso, disc_dir],
+        check=True,
+        capture_output=True,
+    )
+    return iso
+
+
 def make_sample_set(root: Path) -> Path:
     """一部两张盘的样例：盘 1 正片在 VTS_02（PAL 16:9），盘 2 为 NTSC 4:3。返回影片目录。"""
     movie = root / "Sample Movie (2001)"

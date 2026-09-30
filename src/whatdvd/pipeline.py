@@ -65,7 +65,6 @@ def generate(
     *,
     count: int,
     output_dir: Path,
-    strip_prefix: str,
     progress: Progress = lambda _: None,
 ) -> DiscOutput:
     disc = analysis.disc
@@ -83,6 +82,6 @@ def generate(
         shots.append(Shot(index=index, at=at, path=path, ok=ok))
 
     report_path = output_dir / mediainfo_name(disc.file_title)
-    report_path.write_text(build_report(runner, disc.vob, disc.ifo, strip_prefix), encoding="utf-8")
+    report_path.write_text(build_report(runner, disc.vob, disc.ifo, disc.strip_prefix), encoding="utf-8")
     progress(f"{report_path.name} 完成")
     return DiscOutput(mediainfo=report_path, shots=shots)
