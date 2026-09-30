@@ -50,6 +50,14 @@ class Disc:
         return f"{clean_title(self.name)}.{clean_title(self.vob.name)}"
 
     @property
+    def title_ifo(self) -> Path | None:
+        """与 VOB 同一组的 VTS_xx_0.IFO（例如 VIDEO_TS.IFO 或别组的 IFO 不算）。"""
+        vob = vts_part(self.vob.name)
+        if self.ifo is None or vob is None or vts_part(self.ifo.name) != (vob[0], 0, "IFO"):
+            return None
+        return self.ifo
+
+    @property
     def media_type(self) -> str:
         return "DVD5" if self.total_bytes <= DVD5_MAX_BYTES else "DVD9"
 

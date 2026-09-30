@@ -84,15 +84,17 @@ def test_scan(movie: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert "[Disc 1]" in out and "[Disc 2]" in out
     assert "主片：VTS_02（IFO 时长 0:01:10，按时长选出）" in out  # 正片不在 VTS_01
     assert "VOB：VTS_02_1.VOB" in out
-    assert "PAR 1.422，DAR 1.778 → 1024x576" in out
-    assert "PAR 0.889，DAR 1.333 → 720x540" in out  # 默认同 Upload-Assistant：只放大不缩小
+    # 盘 1 的显示区域标为 540 宽：MediaInfo 报 DAR 2.37，按 IFO 的 16:9 计算，不会拉成 1366x576
+    assert "注意：MediaInfo 从 VOB 读到 PAR 1.896，DAR 2.37，与 IFO 的 16:9 不一致，按 IFO 计算" in out
+    assert "PAR 1.422，DAR 16:9（IFO） → 1024x576" in out
+    assert "PAR 0.889，DAR 4:3（IFO） → 720x540" in out  # 默认同 Upload-Assistant：只放大不缩小
     assert "制式：PAL" in out and "制式：NTSC" in out
     assert "容量：DVD5" in out
 
 
 def test_scan_minfo_aspect(movie: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert cli.main(["scan", str(movie), "--aspect", "minfo"]) == 0
-    assert "PAR 0.889，DAR 1.333 → 640x480" in capsys.readouterr().out
+    assert "PAR 0.889，DAR 4:3（IFO） → 640x480" in capsys.readouterr().out
 
 
 def test_run(movie: Path, tmp_path: Path, fake_pixhost: type[FakePixhost]) -> None:

@@ -233,3 +233,12 @@ def test_all_sets_fake_falls_back_to_largest_file(tmp_path: Path) -> None:
     disc = scan_disc(fake_mediainfo({"VTS_01_0.IFO": "36000"}), video_ts, Path("/"))
     assert disc.title_set is None and disc.vob.name == "VTS_02_1.VOB"
     assert [s.title_set for s in disc.skipped_sets] == ["01"]
+
+
+def test_title_ifo_only_when_same_set(tmp_path: Path) -> None:
+    video_ts = make_video_ts(tmp_path / "Disc", {"VTS_02_0.IFO": 100, "VTS_02_1.VOB": 10_000_000})
+    disc = scan_disc(fake_mediainfo({"VTS_02_0.IFO": "10"}), video_ts, Path("/"))
+    assert disc.title_ifo is not None and disc.title_ifo.name == "VTS_02_0.IFO"
+    # 退回 jietu 规则时 IFO 可能是 VIDEO_TS.IFO，不能用来读比例
+    other = make_video_ts(tmp_path / "Other", {"VIDEO_TS.IFO": 5000, "VTS_01_1.VOB": 10_000})
+    assert scan_disc(FakeRunner(), other, Path("/")).title_ifo is None

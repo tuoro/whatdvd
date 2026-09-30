@@ -107,6 +107,7 @@ journalctl --user -u whatdvd -f                          # 查看日志
 | MediaInfo 输出 | 一个文件，VOB 在前、IFO 在后；在输入路径的上级目录用相对路径运行 mediainfo，输出不做任何修改；ISO 显示为 `<ISO 名>/VIDEO_TS/…` |
 | 截图时间点 | 同 Upload-Assistant：在选中 VOB 时长的 5%–90% 之间均匀取点（从 5% 起，每隔 85% ÷ 张数 一张），避开片头和片尾字幕 |
 | 截图尺寸 | 默认同 Upload-Assistant（`aspect = "ua"`）：只放大不缩小，PAR ≥ 1 时宽 × PAR，PAR < 1 时高 = 宽 ÷ DAR，四舍五入后奇数加 1。PAL 16:9 → 1024×576，PAL 4:3 → 768×576，NTSC 16:9 → 854×480，NTSC 4:3 → 720×540。也可设为 `"minfo"`（按 DAR，高度不变，NTSC 4:3 → 640×480）或 `"jietu"` |
+| 显示比例来源 | 优先读主片组 `VTS_xx_0.IFO` 中的比例标记（4:3 或 16:9，播放器实际使用的值），读不到时用 ffprobe，最后才用 MediaInfo。MediaInfo 会按 MPEG-2 的显示区域计算比例，PAL 16:9 盘常把显示宽度标为 540，它因此报 DAR 2.37，截图会被拉成 1366×576；两者不一致时日志会提示 |
 | 剔除黑屏 | 同 Upload-Assistant：多截一张，删掉体积最小的；不超过 120 KB 的视为黑屏，在随机时间点重截，最多 3 次，超过 75 KB 即可，都不理想时保留原图。`--no-dark-filter` 或 `dark_filter = false` 关闭 |
 | 画面处理 | 除尺寸换算外不做任何处理 |
 | 做种 | `mktorrent -v -p -l 24`，announce 可不填 |

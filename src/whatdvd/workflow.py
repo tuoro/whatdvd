@@ -11,7 +11,7 @@ from .dvd import Disc, ScanError
 from .naming import clean_title
 from .pipeline import Analysis, DiscOutput, analyze, generate
 from .post import DEFAULT_TEMPLATE, PostDisc, render_post
-from .probe import ProbeError
+from .probe import ProbeError, VideoInfo
 from .runner import CommandError, Runner
 from .sources import find_sources, is_iso, open_disc
 from .upload import ImageHost, UploadResult, skip_all, upload_all
@@ -128,6 +128,24 @@ def skipped_lines(disc: Disc) -> list[str]:
     ]
 
 
+def format_dar(dar: float | None) -> str:
+    if dar is None:
+        return "无"
+    for name, value in (("4:3", 4 / 3), ("16:9", 16 / 9)):
+        if abs(dar - value) < 0.001:
+            return name
+    return f"{dar:.3f}"
+
+
+def aspect_warning(video: VideoInfo) -> list[str]:
+    if not video.mediainfo_disagrees:
+        return []
+    return [
+        f"  注意：MediaInfo 从 VOB 读到 PAR {video.mediainfo_par}，DAR {video.mediainfo_dar or '无'}，"
+        f"与 {video.dar_source} 的 {format_dar(video.dar)} 不一致，按 {video.dar_source} 计算"
+    ]
+
+
 def describe(source: Path, analysis: Analysis) -> list[str]:
     disc = analysis.disc
     video = analysis.video
@@ -140,7 +158,9 @@ def describe(source: Path, analysis: Analysis) -> list[str]:
         f"  IFO：{disc.ifo.name if disc.ifo else '无'}",
         f"  容量：{disc.media_type}，共 {format_bytes(disc.total_bytes)}",
         f"  制式：{analysis.standard or f'未知（高度 {video.height}）'}",
-        f"  截图尺寸：{video.width}x{video.height}，PAR {video.par_text}，DAR {video.dar or '无'} → {analysis.size[0]}x{analysis.size[1]}",
+        *aspect_warning(video),
+        f"  截图尺寸：{video.width}x{video.height}，PAR {video.par_text}，DAR {format_dar(video.dar)}（{video.dar_source}）"
+        f" → {analysis.size[0]}x{analysis.size[1]}",
         f"  VOB 时长：{analysis.duration} 秒",
     ]
 

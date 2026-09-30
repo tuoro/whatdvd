@@ -74,7 +74,7 @@ def _kib(size: int) -> str:
 
 
 def analyze(runner: Runner, disc: Disc, aspect: str = "ua") -> Analysis:
-    video = probe_video(runner, disc.vob)
+    video = probe_video(runner, disc.vob, disc.title_ifo)
     return Analysis(
         disc=disc,
         video=video,

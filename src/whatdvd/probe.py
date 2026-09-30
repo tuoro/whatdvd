@@ -23,29 +23,102 @@ class VideoInfo:
     width: int
     height: int
     par: float
+    """像素宽高比：有 DAR 时按 DAR × 高 ÷ 宽 算出，否则为 MediaInfo 的 PAR。"""
     par_text: str
-    """MediaInfo 原样输出的 PAR，例如 "1.422"。"""
+    """PAR 的三位小数写法，例如 "1.422"。"""
     dar: float | None = None
-    """MediaInfo 的显示宽高比（小数，例如 1.778），没有时为 None。"""
+    """显示宽高比（例如 1.778），没有时为 None。"""
+    dar_source: str = "MediaInfo"
+    """DAR 的来源：IFO、ffprobe 或 MediaInfo。"""
+    mediainfo_par: float | None = None
+    mediainfo_dar: float | None = None
+    """MediaInfo 从 VOB 读到的原始值，用于提示与 IFO 不一致的情况。"""
+
+    @property
+    def mediainfo_disagrees(self) -> bool:
+        """MediaInfo 的 DAR 与实际采用的相差超过 0.02（例如 PAL 16:9 的 pan & scan 显示区域）。"""
+        return (
+            self.dar_source != "MediaInfo"
+            and self.dar is not None
+            and (self.mediainfo_dar is None or abs(self.mediainfo_dar - self.dar) > 0.02)
+        )
 
 
-def probe_video(runner: Runner, vob: Path) -> VideoInfo:
-    """读取第一条视频流的 PAR 和编码尺寸。
+# VTS_xx_0.IFO 的视频属性（VTSI_MAT 偏移 0x200），第 3–2 位是显示比例：0 = 4:3，3 = 16:9。
+_IFO_MAGIC = b"DVDVIDEO-VTS"
+_IFO_VIDEO_ATTR = 0x200
+_IFO_ASPECTS = {0: 4 / 3, 3: 16 / 9}
 
-    jietu 从 `mediainfo -f` 的 "Pixel aspect ratio" 行取 PAR，这里的 %PixelAspectRatio% 是同一个值。
-    jietu 的宽高取自 ffmpeg，对 VOB 来说与 MediaInfo 的 Width / Height 相同。
+
+def ifo_aspect(ifo: Path) -> float | None:
+    """读取标题组 IFO 中的显示比例标记，这是播放器实际使用的比例。读不到时返回 None。"""
+    try:
+        with ifo.open("rb") as f:
+            data = f.read(_IFO_VIDEO_ATTR + 1)
+    except OSError:
+        return None
+    if len(data) <= _IFO_VIDEO_ATTR or not data.startswith(_IFO_MAGIC):
+        return None
+    return _IFO_ASPECTS.get((data[_IFO_VIDEO_ATTR] >> 2) & 3)
+
+
+def ffprobe_dar(runner: Runner, vob: Path) -> float | None:
+    """ffprobe 的显示比例，例如 "16:9"。ffmpeg 会忽略不合理的 MPEG-2 显示区域。"""
+    output = runner.run(
+        [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=display_aspect_ratio",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            vob,
+        ],
+        check=False,
+    ).stdout.strip()
+    num, _, den = output.partition(":")
+    try:
+        value = int(num) / int(den)
+    except (ValueError, ZeroDivisionError):
+        return None
+    return value if value > 0 else None
+
+
+def probe_video(runner: Runner, vob: Path, ifo: Path | None = None) -> VideoInfo:
+    """读取第一条视频流的编码尺寸和显示比例。
+
+    宽高取自 MediaInfo。显示比例依次取：标题组 IFO 的比例标记 → ffprobe → MediaInfo。
+    MediaInfo 会按 MPEG-2 的显示区域（sequence display extension）计算比例，
+    PAL 16:9 盘常把显示宽度标为 540（供 4:3 电视 pan & scan），MediaInfo 因此报 PAR 1.896、DAR 2.370，
+    截图会被拉成 1366x576。IFO 的标记和 ffprobe 都不受影响。
     """
     output = runner.run(["mediainfo", f"--Inform={_VIDEO_INFORM}", vob]).stdout
     match = _VIDEO_PATTERN.search(output)
     if match is None:
         raise ProbeError(f"MediaInfo 没有给出视频流的 PAR 和尺寸：{vob.name}")
-    par_text, width, height, dar_text = match.groups()
+    par_text, width_text, height_text, dar_text = match.groups()
+    width, height = int(width_text), int(height_text)
+    mediainfo_par = float(par_text)
+    mediainfo_dar = float(dar_text) if dar_text else None
+
+    dar: float | None = None
+    source = "MediaInfo"
+    if ifo is not None and (dar := ifo_aspect(ifo)) is not None:
+        source = "IFO"
+    elif (dar := ffprobe_dar(runner, vob)) is not None:
+        source = "ffprobe"
+    else:
+        dar = mediainfo_dar
+
+    par = dar * height / width if dar is not None else mediainfo_par
     return VideoInfo(
-        width=int(width),
-        height=int(height),
-        par=float(par_text),
-        par_text=par_text,
-        dar=float(dar_text) if dar_text else None,
+        width=width,
+        height=height,
+        par=par,
+        par_text=f"{par:.3f}",
+        dar=dar,
+        dar_source=source,
+        mediainfo_par=mediainfo_par,
+        mediainfo_dar=mediainfo_dar,
     )
 
 
