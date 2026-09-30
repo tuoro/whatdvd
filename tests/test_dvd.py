@@ -6,6 +6,7 @@ from conftest import FakeRunner, make_file, ok
 from whatdvd.dvd import (
     DVD5_MAX_BYTES,
     ScanError,
+    filter_fake_sets,
     largest_file,
     pick_largest,
     pick_main_set,
@@ -182,8 +183,53 @@ def test_main_set_without_title_vob_falls_back(tmp_path: Path) -> None:
 
 
 def test_select_title_generic() -> None:
-    files = [("VTS_01_1.VOB", 9), ("VTS_02_1.VOB", 5), ("VTS_02_0.IFO", 1)]
-    selection = select_title(files, lambda f: f[0], lambda f: f[1], {"02": 100.0})
-    assert selection.vob == ("VTS_02_1.VOB", 5) and selection.ifo == ("VTS_02_0.IFO", 1)
+    files = [("VTS_01_1.VOB", 9_000_000), ("VTS_02_1.VOB", 5_000_000), ("VTS_02_0.IFO", 1)]
+    selection = select_title(files, lambda f: f[0], lambda f: f[1], {"02": 10.0})  # 4 Mbps
+    assert selection.vob == ("VTS_02_1.VOB", 5_000_000) and selection.ifo == ("VTS_02_0.IFO", 1)
     fallback = select_title(files, lambda f: f[0], lambda f: f[1], {})
-    assert fallback.vob == ("VTS_01_1.VOB", 9) and fallback.title_set is None
+    assert fallback.vob == ("VTS_01_1.VOB", 9_000_000) and fallback.title_set is None
+
+
+def test_fake_title_with_long_duration_but_small_vob_is_skipped(tmp_path: Path) -> None:
+    # 复制保护盘：VTS_03 在 IFO 中写了 9 小时，VOB 却只有 120 MB（约 0.03 Mbps）
+    video_ts = make_video_ts(
+        tmp_path / "Disc",
+        {
+            "VTS_01_0.IFO": 20_480,
+            "VTS_01_1.VOB": GB_PART,
+            "VTS_01_2.VOB": GB_PART,
+            "VTS_01_3.VOB": 800_000_000,
+            "VTS_02_0.IFO": 20_480,
+            "VTS_02_1.VOB": 300_000_000,
+            "VTS_03_0.IFO": 20_480,
+            "VTS_03_1.VOB": 120_000_000,
+        },
+    )
+    runner = fake_mediainfo({"VTS_01_0.IFO": "6300", "VTS_02_0.IFO": "900", "VTS_03_0.IFO": "32400"})
+    disc = scan_disc(runner, video_ts, Path("/"))
+    assert disc.title_set == "01"
+    assert disc.vob.name == "VTS_01_1.VOB"
+    assert [s.title_set for s in disc.skipped_sets] == ["03"]
+    assert disc.skipped_sets[0].vob_bytes == 120_000_000
+
+
+@pytest.mark.parametrize(
+    ("duration", "vob_bytes", "skipped"),
+    [
+        (3600.0, 225_000_000, False),  # 恰好 0.5 Mbps
+        (3600.0, 224_999_999, True),
+        (7200.0, 4_000_000_000, False),  # 普通电影，约 4.4 Mbps
+        (100.0, 0, True),  # 只有菜单 VOB
+    ],
+)
+def test_filter_fake_sets_threshold(duration: float, vob_bytes: int, skipped: bool) -> None:
+    kept, dropped = filter_fake_sets({"01": duration}, {"01": vob_bytes} if vob_bytes else {})
+    assert (kept == {}) is skipped
+    assert bool(dropped) is skipped
+
+
+def test_all_sets_fake_falls_back_to_largest_file(tmp_path: Path) -> None:
+    video_ts = make_video_ts(tmp_path / "Disc", {"VTS_01_0.IFO": 100, "VTS_01_1.VOB": 1000, "VTS_02_1.VOB": 2000})
+    disc = scan_disc(fake_mediainfo({"VTS_01_0.IFO": "36000"}), video_ts, Path("/"))
+    assert disc.title_set is None and disc.vob.name == "VTS_02_1.VOB"
+    assert [s.title_set for s in disc.skipped_sets] == ["01"]

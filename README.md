@@ -102,6 +102,7 @@ journalctl --user -u whatdvd -f                          # 查看日志
 | 主片 | 同 Upload-Assistant：读各组 `VTS_xx_0.IFO` 的时长，最长的一组为主片；后面的组要长 10% 以上才替换，所以剧集盘选第一集 |
 | 截图和 VOB 的 MediaInfo | 主片组中最大的 VOB（不含 `_0.VOB` 菜单），大小相同时按文件名取第一个 |
 | IFO 的 MediaInfo | 主片组的 `VTS_xx_0.IFO` |
+| 假标题 | 本项目额外加的：IFO 时长配上该组 VOB（不含 `_0`）总大小，平均码率低于 0.5 Mbps 的组视为假标题跳过（复制保护盘常见），日志中会列出 |
 | IFO 读不出时长时 | 退回 jietu 的规则：盘内体积最大的文件作 VOB，最大的 `.IFO` 作 IFO |
 | MediaInfo 输出 | 一个文件，VOB 在前、IFO 在后；在输入路径的上级目录用相对路径运行 mediainfo，输出不做任何修改；ISO 显示为 `<ISO 名>/VIDEO_TS/…` |
 | 截图时间点 | 第 k 张取在 k × 间隔 秒；间隔按 VOB 时长分档：≥ 3600 秒 331，≥ 1500 秒 121，≥ 600 秒 71，否则 21 |

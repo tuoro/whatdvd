@@ -115,8 +115,17 @@ def format_duration(seconds: float) -> str:
 
 def main_title(disc: Disc) -> str:
     if disc.title_set is None or disc.title_duration is None:
-        return "IFO 中读不出时长，按盘内最大的文件选取"
+        reason = "没有可信的 IFO 时长" if disc.skipped_sets else "IFO 中读不出时长"
+        return f"{reason}，按盘内最大的文件选取"
     return f"VTS_{disc.title_set}（IFO 时长 {format_duration(disc.title_duration)}，按时长选出）"
+
+
+def skipped_lines(disc: Disc) -> list[str]:
+    return [
+        f"  跳过 VTS_{s.title_set}：IFO 时长 {format_duration(s.duration)}，VOB 共 {format_bytes(s.vob_bytes)}，"
+        f"平均 {s.bitrate / 1_000_000:.2f} Mbps，疑似假标题"
+        for s in disc.skipped_sets
+    ]
 
 
 def describe(source: Path, analysis: Analysis) -> list[str]:
@@ -125,6 +134,7 @@ def describe(source: Path, analysis: Analysis) -> list[str]:
     return [
         f"[{disc.name}]",
         f"  来源：{source}",
+        *skipped_lines(disc),
         f"  主片：{main_title(disc)}",
         f"  VOB：{disc.vob.name}（{format_bytes(disc.vob.stat().st_size)}）",
         f"  IFO：{disc.ifo.name if disc.ifo else '无'}",

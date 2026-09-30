@@ -41,6 +41,8 @@ class Disc:
     """主片所在的组号（例如 "02"）；None 表示 IFO 中没有时长，按最大文件选取。"""
     title_duration: float | None = None
     """主片组 IFO 中的时长（秒）。"""
+    skipped_sets: tuple[SkippedSet, ...] = ()
+    """按码率判为假标题而跳过的组。"""
 
     @property
     def file_title(self) -> str:
@@ -77,6 +79,10 @@ def is_ifo(name: str) -> bool:
 
 _VTS = re.compile(r"^VTS_(\d{2})_(\d)\.(VOB|IFO)$", re.IGNORECASE)
 
+# 平均码率低于此值（bit/s）的组判为假标题：复制保护盘常在 IFO 中写入很长的时长，但 VOB 很小。
+# 正常的 DVD 视频至少有 2–3 Mbps。这条规则是本项目加的，Upload-Assistant 没有。
+MIN_TITLE_BITRATE = 500_000
+
 # 后面的组比当前主片长 10% 以上才替换，同 Upload-Assistant：剧集盘会选中第一集。
 MAIN_SET_MARGIN = 1.10
 
@@ -104,11 +110,51 @@ def pick_main_set(durations: Mapping[str, float]) -> str | None:
 
 
 @dataclass(frozen=True)
+class SkippedSet:
+    title_set: str
+    duration: float
+    vob_bytes: int
+    """该组标题 VOB（不含 _0）的总大小。"""
+
+    @property
+    def bitrate(self) -> float:
+        return self.vob_bytes * 8 / self.duration
+
+
+@dataclass(frozen=True)
 class Selection(Generic[T]):
     vob: T
     ifo: T | None
     title_set: str | None
     duration: float | None
+    skipped: tuple[SkippedSet, ...] = ()
+
+
+def title_vob_bytes(files: Sequence[T], name: Callable[[T], str], size: Callable[[T], int]) -> dict[str, int]:
+    """组号 → 标题 VOB（不含 _0 菜单）的总大小。"""
+    totals: dict[str, int] = {}
+    for f in files:
+        part = vts_part(name(f))
+        if part is not None and part[2] == "VOB" and part[1] >= 1:
+            totals[part[0]] = totals.get(part[0], 0) + size(f)
+    return totals
+
+
+def filter_fake_sets(
+    durations: Mapping[str, float], vob_bytes: Mapping[str, int]
+) -> tuple[dict[str, float], tuple[SkippedSet, ...]]:
+    """去掉平均码率低于 MIN_TITLE_BITRATE 的组（IFO 时长和 VOB 大小对不上）。"""
+    kept: dict[str, float] = {}
+    skipped: list[SkippedSet] = []
+    for title_set, duration in durations.items():
+        if duration <= 0:
+            continue
+        info = SkippedSet(title_set, duration, vob_bytes.get(title_set, 0))
+        if info.bitrate < MIN_TITLE_BITRATE:
+            skipped.append(info)
+        else:
+            kept[title_set] = duration
+    return kept, tuple(sorted(skipped, key=lambda s: s.title_set))
 
 
 def select_title(
@@ -118,13 +164,14 @@ def select_title(
     durations: Mapping[str, float],
 ) -> Selection[T]:
     """name 返回文件名（不含目录）。durations 为 组号 → IFO 时长（秒）。"""
+    durations, skipped = filter_fake_sets(durations, title_vob_bytes(files, name, size))
     main = pick_main_set(durations)
     if main is not None:
         parts = [f for f in files if (p := vts_part(name(f))) and p[0] == main and p[2] == "VOB" and p[1] >= 1]
         vob = pick_largest(parts, size, name)
         if vob is not None:
             ifo = next((f for f in files if vts_part(name(f)) == (main, 0, "IFO")), None)
-            return Selection(vob=vob, ifo=ifo, title_set=main, duration=durations[main])
+            return Selection(vob=vob, ifo=ifo, title_set=main, duration=durations[main], skipped=skipped)
 
     vob = pick_largest(files, size, name)
     if vob is None:
@@ -132,7 +179,7 @@ def select_title(
     if not is_vob(name(vob)):
         raise ScanError(f"VIDEO_TS 中最大的文件不是 VOB：{name(vob)}")
     ifo = pick_largest((f for f in files if is_ifo(name(f))), size, name)
-    return Selection(vob=vob, ifo=ifo, title_set=None, duration=None)
+    return Selection(vob=vob, ifo=ifo, title_set=None, duration=None, skipped=skipped)
 
 
 def title_durations(runner: Runner, ifos: Iterable[tuple[str, Path]]) -> dict[str, float]:
@@ -166,6 +213,7 @@ def scan_disc(runner: Runner, video_ts: Path, mediainfo_root: Path) -> Disc:
         mediainfo_root=mediainfo_root,
         title_set=selection.title_set,
         title_duration=selection.duration,
+        skipped_sets=selection.skipped,
     )
 
 

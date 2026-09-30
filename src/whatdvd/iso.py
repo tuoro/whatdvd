@@ -107,4 +107,5 @@ def open_iso(runner: Runner, iso: Path, temp_root: Path | None = None) -> Iterat
             mediainfo_root=temp,
             title_set=selection.title_set,
             title_duration=selection.duration,
+            skipped_sets=selection.skipped,
         )
