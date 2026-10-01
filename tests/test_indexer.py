@@ -123,6 +123,8 @@ def test_fetch_torrent_and_magnet_redirect() -> None:
         ("Фильм / Film (2005) DVD5 | P2-сжатый", "压缩过的盘"),
         ("Фильм / Film (2002) DVD5-Сжатый", "压缩过的盘"),
         ("Фильм (1947) DVD5-Реставрация", "修复版"),
+        ("Снежная королева [1938-1988, СССР, мультфильмы, Betacam SP > DVD5]", "转制"),
+        ("Фильм / Film [1985, США, VHS > DVD9]", "转制"),
         ("Film (2001) DVDRip", "不是 DVD 原盘"),
         ("Film (2001) BDRemux 1080p", "不是 DVD 原盘"),
         ("Film (2001) Blu-ray DVD9", "不是 DVD 原盘"),

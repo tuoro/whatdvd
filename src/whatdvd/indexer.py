@@ -172,6 +172,8 @@ _EXCLUDE = [
     (re.compile(r"custom|кастом", re.IGNORECASE), "Custom（改制过的盘）"),
     (re.compile(r"сжат", re.IGNORECASE), "压缩过的盘（сжатый）"),
     (re.compile(r"реставр", re.IGNORECASE), "修复版（Реставрация），不是原盘"),
+    # rutracker 写明来源的转制盘："Betacam SP > DVD5"、"VHS > DVD9"、"LD > DVD5"
+    (re.compile(r">\s*DVD", re.IGNORECASE), "从其他来源转制成的 DVD（“… > DVD”），不是原盘"),
     (
         re.compile(
             r"rip\b|remux|blu-?ray|\bbd\b|hdtv|web-?dl|\b(?:2160|1080|720)[pi]\b|x26[45]|hevc|avc\b|mkv|avi\b",
