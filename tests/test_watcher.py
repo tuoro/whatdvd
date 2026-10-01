@@ -142,6 +142,17 @@ def test_search_error_is_recorded(h: Harness, services: FakeServices) -> None:
     with pytest.raises(WatcherError, match="HTTP 502"):
         h.run(h.watcher.search)
     assert "HTTP 502" in h.watcher.status()["search_error"]
+    assert "HTTP 502" in h.watcher.status()["sources"]["Jackett"]["error"]
+
+
+def test_search_records_per_source_stats(h: Harness) -> None:
+    """资源页按来源显示上次搜索的结果数、新增数和最新一条的发布时间，便于判断新资源为什么没出现。"""
+    assert h.watcher.status()["sources"] == {}
+    h.run(h.watcher.search)
+    stat = h.watcher.status()["sources"]["Jackett"]
+    queries = len(h.watcher.config.jackett.queries)  # type: ignore[union-attr]
+    assert (stat["kind"], stat["results"], stat["added"], stat["error"]) == ("日常搜索", 4 * queries, 2, None)
+    assert stat["newest"] is None and stat["last"] > 0  # 示例结果没有发布时间
 
 
 def _first(h: Harness) -> str:
@@ -410,3 +421,19 @@ def test_refresh_leaves_pushed_and_other_source_alone(h: Harness, services: Fake
     h.watcher._ingest([same])
     after = h.watcher.store.get(record_id)
     assert after is not None and after.title == record.title  # 已推送的不改
+
+
+def test_schedule_shows_manual_only_interval(tmp_path: Path, downloads: Path, services: FakeServices) -> None:
+    """间隔为 0 时不自动搜索，资源页要能看出来（新资源只能手动搜到的常见原因）。"""
+    import dataclasses
+
+    h = Harness(tmp_path, downloads, services)
+    h.watcher.config = dataclasses.replace(h.config, jackett=dataclasses.replace(h.config.jackett, interval=0))  # type: ignore[arg-type, type-var]
+
+    async def tick() -> None:
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(h.watcher.run_forever(), timeout=0.5)
+
+    h.run(tick)
+    assert h.watcher.status()["schedule"] == {"Jackett": {"every": 0, "next": None}}
+    assert h.watcher.status()["sources"] == {}  # 没有自动搜索

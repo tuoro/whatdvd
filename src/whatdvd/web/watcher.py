@@ -12,7 +12,7 @@ import hashlib
 import logging
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +65,10 @@ class _State:
     backfill_total: int = 0
     backfill_added: int = 0
     last_backfill: float | None = None
+    sources: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """来源（Jackett、rutor）→ 上次搜索的情况：时间、结果数、最新一条的发布时间、错误。"""
+    schedule: dict[str, dict[str, Any]] = field(default_factory=dict)
+    """来源 → 自动搜索的间隔（分钟，0 为只手动搜索）和下次时间。"""
 
 
 class Watcher:
@@ -103,6 +107,8 @@ class Watcher:
             "searching": self._search_lock.locked(),
             "last_sync": self.state.last_sync,
             "sync_error": self.state.sync_error,
+            "sources": self.state.sources,
+            "schedule": self.state.schedule,
             "backfill": {
                 "running": self.state.backfill_running,
                 "done": self.state.backfill_done,
@@ -200,23 +206,39 @@ class Watcher:
             steps += [(f"rutor「{q}」", functools.partial(rutor.search_all, q)) for q in queries]
         return steps
 
-    def _run_steps(self, steps: Sequence[Step], progress: Callable[[int, int], None] | None = None) -> tuple[int, list[str]]:
-        """逐个执行，单次失败不影响其余；连续失败 MAX_CONSECUTIVE_FAILURES 次时停止。返回（新增数，错误）。"""
+    def _run_steps(
+        self, steps: Sequence[Step], progress: Callable[[int, int], None] | None = None, kind: str = "日常搜索"
+    ) -> tuple[int, list[str]]:
+        """逐个执行，单次失败不影响其余；连续失败 MAX_CONSECUTIVE_FAILURES 次时停止。返回（新增数，错误）。
+        按来源记下这次搜索的情况，显示在资源页上，便于判断新资源有没有搜到。"""
         added = 0
         errors: list[str] = []
         consecutive = 0
+        stats: dict[str, dict[str, Any]] = {}
         for index, (label, run) in enumerate(steps, start=1):
+            source = label.split("「", 1)[0]
+            stat = stats.setdefault(source, {"kind": kind, "last": time.time(), "results": 0, "added": 0,
+                                             "newest": None, "error": None})
             try:
-                added += self._ingest(run())
+                releases = run()
+                new = self._ingest(releases)
+                added += new
+                stat["results"] += len(releases)
+                stat["added"] += new
+                dates = [r.published for r in releases if r.published]
+                if dates and (stat["newest"] is None or max(dates) > stat["newest"]):
+                    stat["newest"] = max(dates)
                 consecutive = 0
             except IndexerError as error:
                 errors.append(f"{label}：{error}")
+                stat["error"] = f"{label}：{error}"
                 consecutive += 1
             if progress is not None:
                 progress(index, added)
             if consecutive >= MAX_CONSECUTIVE_FAILURES:
                 errors.append(f"连续 {consecutive} 次失败，停止搜索")
                 break
+        self.state.sources.update(stats)
         return added, errors
 
     @staticmethod
@@ -261,7 +283,7 @@ class Watcher:
 
         async with self._search_lock:
             try:
-                added, errors = await asyncio.to_thread(self._run_steps, steps, progress)
+                added, errors = await asyncio.to_thread(self._run_steps, steps, progress, "全面搜索")
                 self.state.search_error = self._summary(errors, len(steps))
                 if errors:
                     log.warning("全面搜索：%s", self.state.search_error)
@@ -421,9 +443,10 @@ class Watcher:
     async def run_forever(self) -> None:
         qb_interval = self.config.qbit.interval if self.config.qbit else 60
         schedule = {  # 来源 → 间隔（秒），0 为只手动搜索
-            "jackett": self.config.jackett.interval * 60 if self.config.jackett and self.jackett else 0,
-            "rutor": self.config.rutor.interval * 60 if self.config.rutor and self.rutor else 0,
+            "Jackett": self.config.jackett.interval * 60 if self.config.jackett and self.jackett else None,
+            "rutor": self.config.rutor.interval * 60 if self.config.rutor and self.rutor else None,
         }
+        names = {"Jackett": "jackett", "rutor": "rutor"}
         due = {source: time.monotonic() for source in schedule}
         while True:
             if self.qbit is not None:
@@ -432,11 +455,17 @@ class Watcher:
                 except WatcherError as error:
                     log.warning("检查 qBittorrent 失败：%s", error)
             for source, every in schedule.items():
+                if every is None:
+                    continue
                 if every and time.monotonic() >= due[source] and not self.state.backfill_running:
                     due[source] = time.monotonic() + every
                     try:
-                        added = await self.search({source})
+                        added = await self.search({names[source]})
                         log.info("%s 搜索完成，新增 %d 个候选", source, added)
                     except WatcherError as error:
                         log.warning("%s 搜索失败：%s", source, error)
+                self.state.schedule[source] = {
+                    "every": every // 60,
+                    "next": time.time() + max(due[source] - time.monotonic(), 0) if every else None,
+                }
             await asyncio.sleep(qb_interval if self.qbit is not None else 60)

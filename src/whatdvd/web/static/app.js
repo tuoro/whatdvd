@@ -96,6 +96,12 @@ function duration(seconds) {
   return seconds % 60 ? `${m} 分 ${seconds % 60} 秒` : `${m} 分钟`;
 }
 
+function stamp(ts) {
+  const d = new Date(ts * 1000);
+  const today = new Date().toDateString() === d.toDateString();
+  return today ? clock(ts) : d.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 function clock(ts) {
   return new Date(ts * 1000).toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
 }
@@ -1078,13 +1084,35 @@ function renderReleases(group, data) {
   if (s.search_error) problems.push(notice("bad", `搜索：${s.search_error}`));
   if (s.sync_error) problems.push(notice("bad", `qBittorrent：${s.sync_error}`));
 
+  const sourceInfo = sourceStatus(s);
+
   const list = data.releases.length
     ? h("ul", { class: "releases" }, data.releases.map((r) => releaseRow(r, s)))
     : notice("", data.counts[group] ? "没有符合筛选条件的资源。" : RELEASE_EMPTY[group]);
 
   setMain(
     hero({ eyebrow: "资源", title: "DVD 原盘", compact: true, meta, children: [h("div", { class: "actions" }, search, backfill, sync)] }),
-    h("div", { class: "content" }, h("div", {}, tabs), ...problems, releaseFilterBar(group, data), list, releasePager(group, data)));
+    h("div", { class: "content" }, h("div", {}, tabs), ...problems, sourceInfo, releaseFilterBar(group, data), list, releasePager(group, data)));
+}
+
+// 每个来源的自动搜索设置和上次搜索的结果，用来判断新资源为什么没出现
+function sourceStatus(s) {
+  const names = Object.keys({ ...s.schedule, ...s.sources });
+  if (!names.length) return null;
+  return h("ul", { class: "source-status" }, names.map((name) => {
+    const plan = s.schedule[name];
+    const last = s.sources[name];
+    const parts = [];
+    if (plan) parts.push(plan.every ? `每 ${plan.every} 分钟自动搜索${plan.next ? `，下次 ${stamp(plan.next)}` : ""}` : "不自动搜索（间隔为 0），只在点“立即搜索”时搜索");
+    if (last) {
+      parts.push(`上次${last.kind} ${stamp(last.last)}：${last.results} 条结果，新增 ${last.added} 个`);
+      parts.push(last.newest ? `最新一条发布于 ${stamp(last.newest)}` : "结果中没有发布时间");
+    } else {
+      parts.push("启动后还没搜索过");
+    }
+    return h("li", { class: last && last.error ? "bad" : "" }, h("b", {}, name === "rutor" ? "rutor 直连" : name),
+      h("span", {}, parts.join(" · ")), last && last.error ? h("span", { class: "error" }, last.error) : null);
+  }));
 }
 
 function releaseFilterBar(group, data) {
