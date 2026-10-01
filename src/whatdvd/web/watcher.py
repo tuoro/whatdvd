@@ -153,6 +153,7 @@ class Watcher:
                     kind=verdict.kind,
                     discs=verdict.discs,
                     warnings=verdict.notes,
+                    labels=verdict.labels,
                 )
             )
             added += 1
@@ -170,7 +171,7 @@ class Watcher:
             "magnet": release.magnet or record.magnet,
         }
         if verdict.accepted:
-            changes.update(kind=verdict.kind, discs=verdict.discs, warnings=verdict.notes)
+            changes.update(kind=verdict.kind, discs=verdict.discs, warnings=verdict.notes, labels=verdict.labels)
         elif record.status == "new":
             changes.update(status="ignored", error=f"重新搜索后不符合过滤条件：{verdict.reason}")
         if any(getattr(record, key) != value for key, value in changes.items()):

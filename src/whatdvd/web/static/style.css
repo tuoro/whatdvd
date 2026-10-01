@@ -297,6 +297,7 @@ a.card:hover { border-color: var(--line-2); background: var(--panel-2); }
 .release .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { padding: 2px 8px; border-radius: 6px; font-size: 12px; background: var(--panel-2); color: var(--ink-2); }
 .chip.warn { background: var(--amber-soft); color: var(--amber); }
+.chip.good { background: var(--ok-soft); color: var(--ok); }
 .release .bar { max-width: 360px; }
 .release-error { color: var(--bad); font-size: 12.5px; }
 .release-path { color: var(--muted); font: 12px var(--mono); overflow-wrap: anywhere; }

@@ -51,3 +51,21 @@ def test_list_by_status_newest_first(store: Store) -> None:
 def test_public_hides_download_url() -> None:
     data = Record(id="a", title="A", source="x", download_url="http://jackett/dl?apikey=secret").public()
     assert "download_url" not in data and "secret" not in str(data)
+
+
+def test_old_database_without_new_columns(tmp_path: Path) -> None:
+    """旧版本建的表没有 labels 字段：打开时自动补上，旧记录读出默认值。"""
+    import sqlite3
+
+    path = tmp_path / "old.db"
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE records (id TEXT PRIMARY KEY, title TEXT, source TEXT, status TEXT)")
+    db.execute("""INSERT INTO records VALUES ('"a"', '"Old DVD9"', '"x"', '"new"')""")
+    db.commit()
+    db.close()
+
+    store = Store(path)
+    record = store.get("a")
+    assert record is not None and record.title == "Old DVD9" and record.labels == [] and record.warnings == []
+    store.save(Record(id="b", title="New", source="x", labels=["原声，没有翻译（БП）"]))
+    assert store.get("b").labels == ["原声，没有翻译（БП）"]  # type: ignore[union-attr]

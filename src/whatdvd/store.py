@@ -37,6 +37,8 @@ class Record:
     marker: str | None = None
     """untouched：标题标明原盘；None：未标明。"""
     warnings: list[str] = field(default_factory=list)
+    labels: list[str] = field(default_factory=list)
+    """正面标记，例如“原声，没有翻译（БП）”。"""
     progress: float = 0.0
     local_path: str | None = None
     job_id: str | None = None
@@ -57,6 +59,8 @@ _SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS records (
     {", ".join(f"{name} TEXT" if name != "id" else "id TEXT PRIMARY KEY" for name in _COLUMNS)}
 );
+"""
+_INDEXES = """
 CREATE INDEX IF NOT EXISTS records_hash ON records (info_hash);
 CREATE INDEX IF NOT EXISTS records_status ON records (status);
 """
@@ -69,6 +73,12 @@ class Store:
         self._db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
         self._db.execute("PRAGMA journal_mode=WAL")
         self._db.executescript(_SCHEMA)
+        # 旧版本建的表少了后来加的字段：补上（值为 NULL，读取时用默认值）
+        existing = {row[1] for row in self._db.execute("PRAGMA table_info(records)")}
+        for name in _COLUMNS:
+            if name not in existing:
+                self._db.execute(f"ALTER TABLE records ADD COLUMN {name} TEXT")
+        self._db.executescript(_INDEXES)
 
     def close(self) -> None:
         self._db.close()
@@ -79,7 +89,9 @@ class Store:
 
     @staticmethod
     def _decode(row: Iterable[Any]) -> Record:
-        return Record(**{name: json.loads(value) for name, value in zip(_COLUMNS, row, strict=True)})
+        # 旧数据库中后来加的字段为 NULL，用 Record 的默认值
+        values = {name: json.loads(value) for name, value in zip(_COLUMNS, row, strict=True) if value is not None}
+        return Record(**values)
 
     def _query(self, sql: str, args: Iterable[Any] = ()) -> list[Record]:
         with self._lock:

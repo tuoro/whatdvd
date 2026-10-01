@@ -1164,7 +1164,10 @@ function releaseRow(r, s) {
     }
   }
 
-  const notes = (r.warnings || []).map((w) => h("span", { class: "chip warn" }, w));
+  const notes = [
+    ...(r.labels || []).map((label) => h("span", { class: "chip good" }, label)),
+    ...(r.warnings || []).map((w) => h("span", { class: "chip warn" }, w)),
+  ];
   const extra = [];
   if (r.status === "sent" || r.status === "downloading") {
     const bar = h("div", { class: "bar" }, h("i", {}));

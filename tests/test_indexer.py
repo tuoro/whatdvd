@@ -169,12 +169,10 @@ def test_classify_disc_count(title: str, kind: str, discs: int) -> None:
         ("Film (2002) DVD9 | D, P, A-FullScreen", "带俄语配音标记（D, P, A）"),
         ("Film (2002) DVD5 | Р, А", "带俄语配音标记（P, A）"),  # 西里尔字母
         ("Film (2002) DVD5 | P2, L1", "带俄语配音标记（P2, L1）"),
-        ("Film (2002) DVD9 от New-Team | D-Лицензия", "俄罗斯正版盘"),
         ("Film (2002) DVD5 | A-PanScan", "Pan & Scan"),
         # rutor 网页上的原始写法（直连时），配音标记不一定在最后一段
         ("Film (2002) DVD9 | D, P, A | FullScreen", "带俄语配音标记（D, P, A）"),
         ("Film (2002) DVD9 | P2 | Лицензия", "带俄语配音标记（P2）"),
-        ("Film (2002) DVD9 | Лицензия", "俄罗斯正版盘"),
     ],
 )
 def test_classify_notes(title: str, note: str) -> None:
@@ -248,3 +246,22 @@ def test_search_delay(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_parse_torznab_strips_jackett_language_suffix(raw: str, title: str) -> None:
     feed = f"<rss><channel><title>K</title><item><title>{raw}</title><guid>1</guid></item></channel></rss>"
     assert parse_torznab(feed)[0].title == title
+
+
+@pytest.mark.parametrize(
+    ("title", "labels"),
+    [
+        ("Чайка 1971 РУ DVD-5", ["俄语原版片（РУ），没有后加配音"]),
+        ("Andre Rieu - Live in Dublin 2003 БП DVD-5", ["原声，没有翻译（БП）"]),
+        ("Film (2002) DVD9 от New-Team | D-Лицензия", ["俄罗斯正版盘（Лицензия）"]),
+        ("Film (2002) DVD9 | Лицензия", ["俄罗斯正版盘（Лицензия）"]),
+        # 只认单独出现的缩写
+        ("Русалка (2007) DVD9", []),
+        ("Трубка (2007) DVD9", []),
+        ("Film (2002) DVD9", []),
+    ],
+)
+def test_classify_labels(title: str, labels: list[str]) -> None:
+    verdict = classify(title, 1)
+    assert verdict.labels == labels
+    assert not any("正版" in n or "原声" in n or "原版" in n for n in verdict.notes)  # 正面标记不算提示

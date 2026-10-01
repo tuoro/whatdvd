@@ -194,6 +194,9 @@ class Verdict:
     """例如 "DVD9"、"2×DVD9"、"DVD9+DVD5"。"""
     discs: int = 0
     notes: list[str] = field(default_factory=list)
+    """需要留意的地方（可能不是原盘、体积不对、没人做种……）。"""
+    labels: list[str] = field(default_factory=list)
+    """说明是原盘的正面标记（俄语原版片、原声无翻译、正版盘）。"""
 
 
 def _dub_codes(title: str) -> list[str]:
@@ -218,6 +221,11 @@ def _voice_codes(title: str) -> list[str]:
         if code not in codes:
             codes.append(code)
     return codes
+
+
+def _word(word: str, title: str) -> bool:
+    """单独出现的俄文缩写，前后不是西里尔字母。"""
+    return re.search(rf"(?<![А-Яа-яЁё]){word}(?![А-Яа-яЁё])", title) is not None
 
 
 def _looks_stripped(title: str) -> bool:
@@ -257,10 +265,15 @@ def classify(title: str, size: int, seeders: int | None = None) -> Verdict:
         notes.append(f"带俄语配音标记（{', '.join(codes)}），可能加过音轨，需确认是不是原盘")
     if _looks_stripped(title):
         notes.append("标题中的俄文像是被 Jackett 删掉了（Strip Cyrillic Letters），片名和部分过滤标记会丢失")
+    labels = []
+    if _word("РУ", title):  # kinozal：俄语原版片，原声就是俄语
+        labels.append("俄语原版片（РУ），没有后加配音")
+    if _word("БП", title):  # kinozal：без перевода
+        labels.append("原声，没有翻译（БП）")
     if re.search(r"лицензи", title, re.IGNORECASE):
-        notes.append("俄罗斯正版盘（Лицензия）")
+        labels.append("俄罗斯正版盘（Лицензия）")
     if re.search(r"full\s*screen|pan\s*scan", title, re.IGNORECASE):
         notes.append("全屏 / Pan & Scan 版本")
     if seeders == 0:
         notes.append("目前没有做种者")
-    return Verdict(accepted=True, kind=kind, discs=discs, notes=notes)
+    return Verdict(accepted=True, kind=kind, discs=discs, notes=notes, labels=labels)
