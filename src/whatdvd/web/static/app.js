@@ -835,7 +835,7 @@ function renderSettings(data) {
       row("站点", h("span", {}, input("jackett.indexer", v.jackett.indexer, { list: "jackett-indexers" }), indexerList), "all 为全部已配置的站点；点“测试连接”后可以从列表中选"),
       row("搜索关键词", input("jackett.queries", v.jackett.queries.join(" ")), "多个用空格分隔"),
       row("自动搜索", number("jackett.interval", v.jackett.interval, 0, 10080), "分钟一次；0 为只手动搜索"),
-      row("只要影视类", toggle("jackett.films_only", v.jackett.films_only, "只搜分类 2000（电影）和 5000（电视剧、动画、纪录片），去掉音乐、培训等"))));
+      row("只要影视类", toggle("jackett.films_only", v.jackett.films_only, "只要分类 2000（电影）和 5000（电视剧、动画、纪录片），去掉音乐、培训、体育等；Jackett 的 rutor 不区分分类，无法过滤"))));
 
   const error = h("div", { class: "form-errors" });
   const save = h("button", { type: "submit", class: "btn amber" }, "保存");

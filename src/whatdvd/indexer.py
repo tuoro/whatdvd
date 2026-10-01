@@ -22,9 +22,6 @@ DVD9_MAX_BYTES = 8_543_666_176
 
 _TORZNAB = "{http://torznab.com/schemas/2015/feed}attr"
 
-FILM_CATEGORIES = ("2000", "5000")
-"""Torznab 标准分类：电影、电视（剧集、动画、纪录片）。各站在 Jackett 中都映射到这两类，音乐、培训等不在其中。"""
-
 
 class IndexerError(RuntimeError):
     pass
@@ -42,6 +39,25 @@ class Release:
     magnet: str | None
     info_hash: str | None
     seeders: int | None
+    indexer_id: str = ""
+    categories: tuple[int, ...] = ()
+    """Torznab 分类（标准分类和站点自定义分类）。"""
+
+
+# 只要影视类时向 Jackett 请求的 Torznab 分类：电影、电视（剧集、动画、纪录片）、其他。
+# 带上“其他”是因为 Jackett 的 rutor 不区分分类，所有结果都标为 8000；
+# 其他站点标为“其他”的（rutracker 的游戏附赠盘、音色库等）在 is_film 中去掉。
+FILM_QUERY_CATEGORIES = "2000,5000,8000"
+TV_SPORT = 5060
+UNCATEGORIZED_INDEXERS = frozenset({"rutor"})
+"""Jackett 中不区分分类的站点（定义文件里写明 RuTor 的搜索结果页不显示分类）。"""
+
+
+def is_film(release: Release) -> bool:
+    """影视类：电影（2000–2999）或电视（5000–5999，体育 5060 除外）。不区分分类的站点全部保留。"""
+    if release.indexer_id in UNCATEGORIZED_INDEXERS:
+        return True
+    return any(2000 <= c < 3000 or (5000 <= c < 6000 and c != TV_SPORT) for c in release.categories)
 
 
 # Jackett 的 "Add RUSSIAN to end of all titles"（kinozal 默认开着）在标题末尾加的标记，给 Sonarr / Radarr 用
@@ -84,6 +100,10 @@ def parse_torznab(text: str) -> list[Release]:
                 magnet=attrs.get("magneturl"),
                 info_hash=(attrs.get("infohash") or "").lower() or None,
                 seeders=int(seeders) if seeders and seeders.isdigit() else None,
+                indexer_id=(indexer.get("id") or "") if indexer is not None else "",
+                categories=tuple(
+                    int(c.text) for c in item.findall("category") if c.text and c.text.strip().isdigit()
+                ),
             )
         )
     return releases
@@ -96,7 +116,7 @@ class Jackett:
         api_key: str,
         *,
         indexer: str = "all",
-        categories: tuple[str, ...] = (),
+        films_only: bool = False,
         timeout: float = 120.0,
         delay: float = 0.0,
         transport: httpx.BaseTransport | None = None,
@@ -108,7 +128,7 @@ class Jackett:
         self._base = url.rstrip("/")
         self._api_key = api_key
         self._indexer = indexer
-        self._categories = categories
+        self._films_only = films_only
         self._client = httpx.Client(timeout=timeout, transport=transport)
 
     def close(self) -> None:
@@ -121,8 +141,8 @@ class Jackett:
             if wait > 0:
                 time.sleep(wait)
             params = {"apikey": self._api_key, "t": "search", "q": query}
-            if self._categories:  # Jackett 按分类分别向站点搜索，每个分类各有一份条数上限
-                params["cat"] = ",".join(self._categories)
+            if self._films_only:  # Jackett 按分类分别向站点搜索，每个分类各有一份条数上限
+                params["cat"] = FILM_QUERY_CATEGORIES
             response = self._client.get(url, params=params)
         except httpx.HTTPError as error:
             raise IndexerError(f"连不上 Jackett：{error or type(error).__name__}") from error
@@ -136,7 +156,8 @@ class Jackett:
             except (ValueError, AttributeError):
                 detail = None
             raise IndexerError(f"Jackett 返回错误：{detail or f'HTTP {response.status_code}'}")
-        return parse_torznab(response.text)
+        releases = parse_torznab(response.text)
+        return [r for r in releases if is_film(r)] if self._films_only else releases
 
     def indexers(self) -> list[tuple[str, str]]:
         """Jackett 中已配置的站点：[(ID, 名称)]。也用来测试地址和 API Key 是否正确。"""

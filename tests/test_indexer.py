@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from whatdvd.indexer import DVD9_MAX_BYTES, FILM_CATEGORIES, IndexerError, Jackett, classify, parse_torznab
+from whatdvd.indexer import DVD9_MAX_BYTES, IndexerError, Jackett, classify, parse_torznab
 
 # 结构同 Jackett 1.x 对 rutor 的 Torznab 输出，标题和链接为虚构
 FEED = """<?xml version="1.0" encoding="UTF-8"?>
@@ -62,18 +62,36 @@ def _jackett(handler: httpx.MockTransport) -> Jackett:
     return Jackett("http://jackett:9117/", "KEY", indexer="rutor", transport=handler)
 
 
-def test_search_film_categories() -> None:
-    """只要影视类时带上 cat=2000,5000；不限分类时不带。"""
+def _film_item(guid: str, indexer: str, *cats: int) -> str:
+    categories = "".join(f"<category>{c}</category>" for c in cats)
+    return (f"<item><title>Film {guid} DVD9</title><guid>{guid}</guid>"
+            f"<jackettindexer id='{indexer}'>{indexer}</jackettindexer><size>1</size>{categories}</item>")
+
+
+def test_search_films_only() -> None:
+    """只要影视类：请求电影、电视、其他三类，再去掉标为其他、体育的；Jackett 的 rutor 不区分分类，全部保留。"""
     seen: list[str | None] = []
+    feed = (
+        "<rss><channel><title>x</title>"
+        + _film_item("movie", "rutracker", 2070, 100101)
+        + _film_item("series", "rutracker", 5000, 100921)
+        + _film_item("sport", "rutracker", 5060, 100283)
+        + _film_item("game-bonus", "rutracker", 8000, 100003)
+        + _film_item("rutor", "rutor", 8000, 100003)
+        + "</channel></rss>"
+    )
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request.url.params.get("cat"))
-        return httpx.Response(200, text="<rss><channel><title>x</title></channel></rss>")
+        return httpx.Response(200, text=feed)
 
     transport = httpx.MockTransport(handler)
-    Jackett("http://jackett:9117", "KEY", categories=FILM_CATEGORIES, transport=transport).search("DVD9")
-    Jackett("http://jackett:9117", "KEY", transport=transport).search("DVD9")
-    assert seen == ["2000,5000", None]
+    films = Jackett("http://jackett:9117", "KEY", films_only=True, transport=transport).search("DVD9")
+    assert [r.guid for r in films] == ["movie", "series", "rutor"]
+    assert films[0].categories == (2070, 100101) and films[0].indexer_id == "rutracker"
+    everything = Jackett("http://jackett:9117", "KEY", transport=transport).search("DVD9")
+    assert len(everything) == 5
+    assert seen == ["2000,5000,8000", None]
 
 
 def test_search_request() -> None:

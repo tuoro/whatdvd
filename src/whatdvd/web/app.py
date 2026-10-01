@@ -22,7 +22,7 @@ from ..post import DEFAULT_TEMPLATE
 from ..runner import Runner, SubprocessRunner
 from ..sources import find_sources, is_iso
 from ..checks import describe_extra_files, find_extra_files
-from ..indexer import FILM_CATEGORIES, IndexerError, Jackett
+from ..indexer import IndexerError, Jackett
 from ..qbit import QBittorrent, QbitError
 from ..resolution import ASPECT_MODES
 from ..rutor import Rutor
@@ -257,9 +257,9 @@ def create_app(
         if qb is None and c.qbit is not None:
             qb = QBittorrent(c.qbit.url, c.qbit.username, c.qbit.password)
         if jk is None and c.jackett is not None:
-            categories = FILM_CATEGORIES if c.jackett.films_only else ()
             jk = Jackett(
-                c.jackett.url, c.jackett.api_key, indexer=c.jackett.indexer, categories=categories, delay=JACKETT_DELAY
+                c.jackett.url, c.jackett.api_key, indexer=c.jackett.indexer, films_only=c.jackett.films_only,
+                delay=JACKETT_DELAY,
             )
         if qb is None and jk is None and ru is None:
             return
