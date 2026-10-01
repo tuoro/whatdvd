@@ -984,33 +984,68 @@ function scheduleReleasePoll(group, busy) {
   }, busy ? 4000 : 30000);
 }
 
-async function showReleases(group, quiet = false) {
+const RELEASE_PAGE = 50;
+
+function releaseFilter() {
+  state.releaseFilter = state.releaseFilter || { q: "", kind: "", seeded: false, clean: false, page: 0 };
+  return state.releaseFilter;
+}
+
+async function showReleases(group, quiet = false, force = false) {
   state.selected = null;
   if (!quiet && state.listing) renderListing();
-  const data = await api(`/api/releases?group=${group}`);
+  const f = releaseFilter();
+  if (!quiet) f.page = 0;  // 从别的页面或标签进入时回到第一页
+  const params = new URLSearchParams({ group, offset: String(f.page * RELEASE_PAGE), limit: String(RELEASE_PAGE) });
+  if (f.q.trim()) params.set("q", f.q.trim());
+  if (f.kind) params.set("kind", f.kind);
+  if (f.seeded) params.set("seeded", "true");
+  if (f.clean) params.set("clean", "true");
+  const data = await api(`/api/releases?${params}`);
   if (!state.route || state.route.name !== "releases" || state.route.group !== group) return;
-  // 轮询刷新时，用户正在操作的按钮不要被重绘打断
-  if (quiet && document.querySelector("#main [data-busy]")) {
+  // 轮询刷新时，不打断正在操作的按钮和正在输入的筛选框
+  const active = document.activeElement;
+  if (quiet && !force && (document.querySelector("#main [data-busy]") || (active && active.closest("#main .release-filter")))) {
     scheduleReleasePoll(group, true);
     return;
   }
+  if (data.total && f.page * RELEASE_PAGE >= data.total) {  // 筛选后页数变少
+    f.page = Math.floor((data.total - 1) / RELEASE_PAGE);
+    await showReleases(group, quiet, force);
+    return;
+  }
+  // 重绘后把光标放回筛选框原来的位置，输入不中断
+  const typing = active && active.matches("#main .release-filter input[type=search]")
+    ? [active.selectionStart, active.selectionEnd] : null;
   renderReleases(group, data);
+  if (typing) {
+    const box = document.querySelector("#main .release-filter input[type=search]");
+    box.focus();
+    box.setSelectionRange(...typing);
+  }
   refreshReleaseCount(data.counts);
-  const busy = data.status.searching || data.counts.active > 0;
+  const busy = data.status.searching || data.status.backfill.running || data.counts.active > 0;
   scheduleReleasePoll(group, busy);
 }
 
 function renderReleases(group, data) {
   const s = data.status;
   const c = state.config;
+  const bf = s.backfill;
   const meta = [
     h("span", {}, s.jackett ? `Jackett：${c.jackett.indexer === "all" ? "全部站点" : c.jackett.indexer}` : "未配置 Jackett"),
-    s.jackett ? h("span", {}, s.last_search ? `上次搜索 ${clock(s.last_search)}，新增 ${s.last_added} 个` : "还没有搜索") : null,
+    s.jackett && bf.running ? h("span", {}, `全面搜索中 ${bf.done}/${bf.total}，新增 ${bf.added} 个`) : null,
+    s.jackett && !bf.running ? h("span", {}, s.last_search ? `上次搜索 ${clock(s.last_search)}，新增 ${s.last_added} 个` : "还没有搜索") : null,
+    s.jackett && !bf.running && bf.last ? h("span", {}, `上次全面搜索 ${clock(bf.last)}，新增 ${bf.added} 个`) : null,
     h("span", {}, s.qbit ? `qBittorrent 分类 ${c.qbit.category}` : "未配置 qBittorrent"),
   ].filter(Boolean);
   const search = h("button", { type: "button", class: "btn amber", disabled: !s.jackett || s.searching },
-    icon("search"), s.searching ? "搜索中…" : "立即搜索");
+    icon("search"), s.searching && !bf.running ? "搜索中…" : "立即搜索");
   search.addEventListener("click", () => releaseRequest(search, "/api/releases/refresh", (r) => `新增 ${r.added} 个候选`));
+  const backfill = h("button", { type: "button", class: "btn glass", disabled: !s.jackett || s.searching,
+    title: "站点每次搜索最多返回 100 条。按“关键词 年份”逐年搜索，可以找到更早发布的资源，需要几分钟。" },
+  bf.running ? `全面搜索中 ${Math.round((bf.done / Math.max(bf.total, 1)) * 100)}%` : "按年份全面搜索");
+  backfill.addEventListener("click", () => releaseRequest(backfill, "/api/releases/backfill", (r) => `开始全面搜索，共 ${r.total} 次查询`));
   const sync = h("button", { type: "button", class: "btn glass", disabled: !s.qbit }, icon("refresh"), "检查下载");
   sync.addEventListener("click", () => releaseRequest(sync, "/api/releases/sync", () => "已检查 qBittorrent"));
 
@@ -1024,11 +1059,47 @@ function renderReleases(group, data) {
 
   const list = data.releases.length
     ? h("ul", { class: "releases" }, data.releases.map((r) => releaseRow(r, s)))
-    : notice("", RELEASE_EMPTY[group]);
+    : notice("", data.counts[group] ? "没有符合筛选条件的资源。" : RELEASE_EMPTY[group]);
 
   setMain(
-    hero({ eyebrow: "资源", title: "DVD 原盘", compact: true, meta, children: [h("div", { class: "actions" }, search, sync)] }),
-    h("div", { class: "content" }, h("div", {}, tabs), ...problems, list));
+    hero({ eyebrow: "资源", title: "DVD 原盘", compact: true, meta, children: [h("div", { class: "actions" }, search, backfill, sync)] }),
+    h("div", { class: "content" }, h("div", {}, tabs), ...problems, releaseFilterBar(group, data), list, releasePager(group, data)));
+}
+
+function releaseFilterBar(group, data) {
+  const f = releaseFilter();
+  const reload = () => { f.page = 0; showReleases(group, true, true); };
+  const q = h("input", { type: "search", value: f.q, placeholder: "按标题筛选，例如片名或年份", spellcheck: "false" });
+  let timer = null;
+  q.addEventListener("input", () => {
+    f.q = q.value;
+    clearTimeout(timer);
+    timer = setTimeout(reload, 350);
+  });
+  q.addEventListener("keydown", (event) => { if (event.key === "Enter") { clearTimeout(timer); reload(); } });
+  const kind = h("select", {}, [["", "全部"], ["DVD9", "DVD9"], ["DVD5", "DVD5"], ["multi", "多张盘"]].map(([value, label]) =>
+    h("option", { value, selected: f.kind === value }, label)));
+  kind.addEventListener("change", () => { f.kind = kind.value; reload(); });
+  const check = (key, label) => {
+    const box = h("input", { type: "checkbox", checked: f[key] });
+    box.addEventListener("change", () => { f[key] = box.checked; reload(); });
+    return h("label", { class: "check" }, box, label);
+  };
+  const shown = data.total === data.counts[group] ? `共 ${data.total} 个` : `筛选出 ${data.total} 个，共 ${data.counts[group]} 个`;
+  return h("div", { class: "release-filter" }, q, kind, check("seeded", "有做种者"), check("clean", "没有提示"),
+    h("span", { class: "filter-count" }, shown));
+}
+
+function releasePager(group, data) {
+  const f = releaseFilter();
+  const pages = Math.ceil(data.total / RELEASE_PAGE);
+  if (pages <= 1) return null;
+  const go = (page) => { f.page = page; showReleases(group, true, true).then(() => window.scrollTo(0, 0)); };
+  const prev = h("button", { type: "button", class: "btn small glass", disabled: f.page === 0 }, "上一页");
+  const next = h("button", { type: "button", class: "btn small glass", disabled: f.page >= pages - 1 }, "下一页");
+  prev.addEventListener("click", () => go(f.page - 1));
+  next.addEventListener("click", () => go(f.page + 1));
+  return h("div", { class: "pager" }, prev, h("span", {}, `第 ${f.page + 1} / ${pages} 页`), next);
 }
 
 function releaseRow(r, s) {

@@ -124,4 +124,4 @@ class Store:
             return []
         marks = ", ".join("?" for _ in wanted)
         records = self._query(f"SELECT {', '.join(_COLUMNS)} FROM records WHERE status IN ({marks})", wanted)
-        return sorted(records, key=lambda r: (r.published or r.found_at), reverse=True)
+        return sorted(records, key=lambda r: r.published if r.published is not None else r.found_at, reverse=True)

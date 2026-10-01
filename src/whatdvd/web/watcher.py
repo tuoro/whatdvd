@@ -6,15 +6,16 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import hashlib
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..indexer import IndexerError, Jackett, classify
+from ..indexer import IndexerError, Jackett, Release, classify
 from ..qbit import PathMap, QBittorrent, QbitError, magnet_info_hash, torrent_info_hash
 from ..store import Record, Status, Store
 from .config import ServerConfig
@@ -23,6 +24,15 @@ from .jobs import Job
 log = logging.getLogger("whatdvd.watcher")
 
 ACTIVE: tuple[Status, ...] = ("sent", "downloading")
+
+BACKFILL_FROM = 1920
+"""全面搜索从这一年开始。站点每次搜索最多返回 100 条，按“关键词 年份”拆开才能搜到更早的资源。"""
+
+
+def backfill_queries(queries: Sequence[str], until: int | None = None) -> list[str]:
+    """关键词 × 年份，近的年份在前。"""
+    until = until or datetime.date.today().year
+    return [f"{query} {year}" for year in range(until, BACKFILL_FROM - 1, -1) for query in queries]
 
 
 class WatcherError(RuntimeError):
@@ -36,6 +46,11 @@ class _State:
     last_added: int = 0
     last_sync: float | None = None
     sync_error: str | None = None
+    backfill_running: bool = False
+    backfill_done: int = 0
+    backfill_total: int = 0
+    backfill_added: int = 0
+    last_backfill: float | None = None
 
 
 class Watcher:
@@ -57,6 +72,7 @@ class Watcher:
         self._get_job = get_job
         self._path_map = PathMap(config.qbit.path_map if config.qbit else ())
         self._search_lock = asyncio.Lock()
+        self._backfill_task: asyncio.Task[None] | None = None
         self._sync_lock = asyncio.Lock()
         self.state = _State()
 
@@ -70,9 +86,18 @@ class Watcher:
             "searching": self._search_lock.locked(),
             "last_sync": self.state.last_sync,
             "sync_error": self.state.sync_error,
+            "backfill": {
+                "running": self.state.backfill_running,
+                "done": self.state.backfill_done,
+                "total": self.state.backfill_total,
+                "added": self.state.backfill_added,
+                "last": self.state.last_backfill,
+            },
         }
 
     def close(self) -> None:
+        if self._backfill_task is not None:
+            self._backfill_task.cancel()
         if self.qbit is not None:
             self.qbit.close()
         if self.jackett is not None:
@@ -80,38 +105,46 @@ class Watcher:
 
     # ---------- 搜索 ----------
 
-    def _search(self) -> int:
-        assert self.jackett is not None and self.config.jackett is not None
+    def _ingest(self, releases: Sequence[Release]) -> int:
         added = 0
-        for query in self.config.jackett.queries:
-            for release in self.jackett.search(query):
-                verdict = classify(release.title, release.size, release.seeders)
-                if not verdict.accepted:
-                    continue
-                record = Record(
-                    id=hashlib.sha1(f"{release.indexer}\n{release.guid}".encode()).hexdigest()[:16],
-                    title=release.title,
-                    source=release.indexer,
-                    size=release.size,
-                    published=release.published,
-                    details_url=release.details_url,
-                    download_url=release.download_url,
-                    magnet=release.magnet,
-                    info_hash=release.info_hash,
-                    seeders=release.seeders,
-                    kind=verdict.kind,
-                    discs=verdict.discs,
-                    warnings=verdict.notes,
-                )
-                added += self.store.add_new(record)
+        for release in releases:
+            verdict = classify(release.title, release.size, release.seeders)
+            if not verdict.accepted:
+                continue
+            record = Record(
+                id=hashlib.sha1(f"{release.indexer}\n{release.guid}".encode()).hexdigest()[:16],
+                title=release.title,
+                source=release.indexer,
+                size=release.size,
+                published=release.published,
+                details_url=release.details_url,
+                download_url=release.download_url,
+                magnet=release.magnet,
+                info_hash=release.info_hash,
+                seeders=release.seeders,
+                kind=verdict.kind,
+                discs=verdict.discs,
+                warnings=verdict.notes,
+            )
+            added += self.store.add_new(record)
+        return added
+
+    def _search(self, queries: Sequence[str], progress: Callable[[int, int], None] | None = None) -> int:
+        assert self.jackett is not None
+        added = 0
+        for index, query in enumerate(queries, start=1):
+            added += self._ingest(self.jackett.search(query))
+            if progress is not None:
+                progress(index, added)
         return added
 
     async def search(self) -> int:
         if self.jackett is None:
             raise WatcherError("没有配置 Jackett")
+        assert self.config.jackett is not None
         async with self._search_lock:
             try:
-                added = await asyncio.to_thread(self._search)
+                added = await asyncio.to_thread(self._search, self.config.jackett.queries)
             except IndexerError as error:
                 self.state.search_error = str(error)
                 raise WatcherError(str(error)) from None
@@ -120,6 +153,36 @@ class Watcher:
             self.state.search_error = None
             self.state.last_added = added
             return added
+
+    def start_backfill(self) -> int:
+        """在后台按“关键词 年份”逐个搜索，返回要搜索的次数。同一时间只能有一个搜索。"""
+        if self.jackett is None or self.config.jackett is None:
+            raise WatcherError("没有配置 Jackett")
+        if self._search_lock.locked() or self.state.backfill_running:
+            raise WatcherError("正在搜索，请等这次搜索完成")
+        queries = backfill_queries(self.config.jackett.queries)
+        self.state.backfill_running = True
+        self.state.backfill_done = self.state.backfill_added = 0
+        self.state.backfill_total = len(queries)
+        self._backfill_task = asyncio.get_running_loop().create_task(self._backfill(queries))
+        return len(queries)
+
+    async def _backfill(self, queries: Sequence[str]) -> None:
+        def progress(done: int, added: int) -> None:
+            self.state.backfill_done, self.state.backfill_added = done, added
+
+        async with self._search_lock:
+            try:
+                added = await asyncio.to_thread(self._search, queries, progress)
+            except IndexerError as error:
+                self.state.search_error = f"全面搜索在第 {self.state.backfill_done + 1} 次查询时失败：{error}"
+                log.warning("%s", self.state.search_error)
+            else:
+                self.state.search_error = None
+                log.info("全面搜索完成，新增 %d 个候选", added)
+            finally:
+                self.state.backfill_running = False
+                self.state.last_backfill = time.time()
 
     # ---------- 推送到 qB ----------
 

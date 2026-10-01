@@ -490,11 +490,37 @@ def create_app(
         return HTTPException(409, str(error))
 
     @app.get("/api/releases", dependencies=auth)
-    async def list_releases(group: Literal["new", "active", "finished", "ignored"] = "new") -> dict[str, Any]:
+    async def list_releases(
+        group: Literal["new", "active", "finished", "ignored"] = "new",
+        q: str = "",
+        kind: Literal["", "DVD9", "DVD5", "multi"] = "",
+        seeded: bool = False,
+        clean: bool = False,
+        offset: Annotated[int, Query(ge=0)] = 0,
+        limit: Annotated[int, Query(ge=1, le=200)] = 50,
+    ) -> dict[str, Any]:
+        """q：标题中包含的文字（不区分大小写）；kind：DVD9 / DVD5 单盘或 multi 多盘；
+        seeded：只看有做种者的；clean：只看没有提示的。"""
         current = get_watcher()
         counts = {name: len(current.store.list(statuses)) for name, statuses in RELEASE_GROUPS.items()}
         records = current.store.list(RELEASE_GROUPS[group])
-        return {"releases": [r.public() for r in records], "counts": counts, "status": current.status()}
+        words = q.casefold().split()
+        if words:
+            records = [r for r in records if all(word in r.title.casefold() for word in words)]
+        if kind == "multi":
+            records = [r for r in records if r.discs > 1]
+        elif kind:
+            records = [r for r in records if r.kind == kind]
+        if seeded:
+            records = [r for r in records if r.seeders]
+        if clean:
+            records = [r for r in records if not r.warnings]
+        return {
+            "releases": [r.public() for r in records[offset : offset + limit]],
+            "total": len(records),
+            "counts": counts,
+            "status": current.status(),
+        }
 
     @app.post("/api/releases/refresh", dependencies=auth)
     async def refresh_releases() -> dict[str, Any]:
@@ -504,6 +530,15 @@ def create_app(
         except WatcherError as error:
             raise watcher_error(error) from None
         return {"added": added}
+
+    @app.post("/api/releases/backfill", dependencies=auth, status_code=202)
+    async def backfill_releases() -> dict[str, Any]:
+        """按“关键词 年份”全面搜索，在后台进行；进度见 /api/releases 的 status.backfill。"""
+        try:
+            total = get_watcher().start_backfill()
+        except WatcherError as error:
+            raise watcher_error(error) from None
+        return {"total": total}
 
     @app.post("/api/releases/sync", dependencies=auth, status_code=204)
     async def sync_releases() -> None:

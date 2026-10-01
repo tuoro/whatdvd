@@ -386,3 +386,11 @@ a.card:hover { border-color: var(--line-2); background: var(--panel-2); }
   .form-row { grid-template-columns: 1fr; gap: 6px; }
   .form-label { padding-top: 0; }
 }
+
+.release-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.release-filter input[type="search"], .release-filter select {
+  padding: 7px 10px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--panel-2); color: var(--ink); font: inherit;
+}
+.release-filter input[type="search"] { flex: 1; min-width: 220px; max-width: 420px; }
+.release-filter .filter-count { margin-left: auto; color: var(--muted); font-size: 13px; }
+.pager { display: flex; align-items: center; justify-content: center; gap: 14px; color: var(--ink-2); }

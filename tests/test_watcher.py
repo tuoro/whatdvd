@@ -252,3 +252,54 @@ def test_qbit_unreachable(h: Harness, services: FakeServices) -> None:
     with pytest.raises(WatcherError, match="连不上 qBittorrent"):
         h.run(h.watcher.sync)
     assert "连不上" in h.watcher.status()["sync_error"]
+
+
+def test_backfill_queries() -> None:
+    from whatdvd.web.watcher import BACKFILL_FROM, backfill_queries
+
+    queries = backfill_queries(["DVD9", "DVD5"], until=2026)
+    assert queries[:3] == ["DVD9 2026", "DVD5 2026", "DVD9 2025"]  # 近的年份在前
+    assert queries[-1] == f"DVD5 {BACKFILL_FROM}"
+    assert len(queries) == 2 * (2026 - BACKFILL_FROM + 1)
+
+
+def test_backfill_runs_in_background(h: Harness, services: FakeServices) -> None:
+    seen: list[str] = []
+    original = services.__call__
+
+    def record(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/torznab/api"):
+            seen.append(request.url.params["q"])
+        return original(request)
+
+    h.watcher.jackett = Jackett("http://jackett", "KEY", indexer="rutor", transport=httpx.MockTransport(record))
+
+    async def scenario() -> dict[str, Any]:
+        total = h.watcher.start_backfill()
+        assert h.watcher.status()["backfill"]["running"]
+        with pytest.raises(WatcherError, match="正在搜索"):
+            h.watcher.start_backfill()
+        task = h.watcher._backfill_task
+        assert task is not None
+        await task
+        assert total == len(seen)
+        return h.watcher.status()["backfill"]
+
+    status = asyncio.run(scenario())
+    assert status["running"] is False and status["done"] == status["total"] and status["added"] == 2
+    assert seen[0].startswith("DVD9 ") and seen[0].split()[1].isdigit()
+    assert len(h.watcher.store.list(["new"])) == 2
+
+
+def test_backfill_error_is_reported(h: Harness) -> None:
+    h.watcher.jackett = Jackett("http://jackett", "KEY", transport=httpx.MockTransport(lambda r: httpx.Response(502)))
+
+    async def scenario() -> None:
+        h.watcher.start_backfill()
+        assert h.watcher._backfill_task is not None
+        await h.watcher._backfill_task
+
+    asyncio.run(scenario())
+    status = h.watcher.status()
+    assert status["backfill"]["running"] is False
+    assert "全面搜索在第 1 次查询时失败" in status["search_error"]

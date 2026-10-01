@@ -489,3 +489,47 @@ def test_job_limit_can_change_while_running() -> None:
         return started
 
     asyncio.run(scenario())
+
+
+def test_release_filters_and_paging(tmp_path: Path, media: Path) -> None:
+    from whatdvd.store import Record
+
+    from whatdvd.indexer import Jackett
+    from whatdvd.web.config import JackettConfig
+
+    config = ServerConfig(
+        roots=(media.resolve(),), output_dir=tmp_path / "out", token=TOKEN, database=tmp_path / "state.db",
+        jackett=JackettConfig("http://jackett", "k"),
+    )
+
+    jackett = Jackett("http://jackett", "k", transport=httpx.MockTransport(lambda r: httpx.Response(500)))
+    app = create_app(config, runner=FakeRunner(fake_mktorrent), jackett=jackett, background=False)
+    with TestClient(app, headers={"Authorization": f"Bearer {TOKEN}"}) as client:
+        store = app.state.watcher.store
+        rows = [
+            ("a", "Alpha / Альфа (1999) DVD9", "DVD9", 1, 3, []),
+            ("b", "Beta (2001) DVD5 | P", "DVD5", 1, 0, ["带俄语配音标记（P）"]),
+            ("c", "Gamma (2001) 2 DVD9", "2×DVD9", 2, 5, []),
+        ]
+        for i, (rid, title, kind, discs, seeders, warnings) in enumerate(rows):
+            store.save(Record(id=rid, title=title, source="RuTor", kind=kind, discs=discs, seeders=seeders,
+                              warnings=warnings, published=float(i)))
+
+        def ids(query: str = "") -> list[str]:
+            return [r["id"] for r in client.get(f"/api/releases?{query}").json()["releases"]]
+
+        assert ids() == ["c", "b", "a"]
+        assert ids("q=альфа") == ["a"]  # 不区分大小写，支持西里尔字母
+        assert ids("q=2001 beta") == ["b"]  # 多个词都要包含
+        assert ids("kind=DVD9") == ["a"]
+        assert ids("kind=multi") == ["c"]
+        assert ids("seeded=true") == ["c", "a"]
+        assert ids("clean=true") == ["c", "a"]
+        assert ids("limit=2") == ["c", "b"] and ids("limit=2&offset=2") == ["a"]
+        data = client.get("/api/releases?kind=DVD5").json()
+        assert data["total"] == 1 and data["counts"]["new"] == 3
+        assert data["status"]["backfill"] == {"running": False, "done": 0, "total": 0, "added": 0, "last": None}
+        assert client.get("/api/releases?limit=500").status_code == 422
+
+        response = client.post("/api/releases/backfill")
+        assert response.status_code == 202 and response.json()["total"] > 100
