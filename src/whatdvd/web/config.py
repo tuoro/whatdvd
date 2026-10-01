@@ -19,12 +19,40 @@ DEFAULT_CONFIG_PATH = Path("~/.config/whatdvd/config.toml")
 DEFAULT_TOKEN_FILE = Path("~/.local/share/whatdvd/token")
 CONFIG_ENV = "WHATDVD_CONFIG"
 DEFAULT_OUTPUT_DIR = Path("~/.local/share/whatdvd/output")
+DEFAULT_DATABASE = Path("~/.local/share/whatdvd/whatdvd.db")
+QB_PASSWORD_ENV = "WHATDVD_QB_PASSWORD"
+JACKETT_KEY_ENV = "WHATDVD_JACKETT_API_KEY"
 DEFAULT_PORT = 26873
 TOKEN_ENV = "WHATDVD_TOKEN"
 
 
 class ConfigError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class QbitConfig:
+    url: str
+    username: str = ""
+    password: str = ""
+    category: str = "whatdvd"
+    save_path: str | None = None
+    """qB 中的保存路径；不填用分类或 qB 的默认路径。"""
+    path_map: tuple[tuple[str, str], ...] = ()
+    """qB 中的路径 → whatdvd 看到的路径。"""
+    interval: int = 60
+    """检查下载进度的间隔（秒）。"""
+
+
+@dataclass(frozen=True)
+class JackettConfig:
+    url: str
+    api_key: str
+    indexer: str = "all"
+    """Jackett 中的站点 ID，"all" 为全部已配置的站点。"""
+    queries: tuple[str, ...] = ("DVD9", "DVD5")
+    interval: int = 60
+    """自动搜索的间隔（分钟），0 为只手动刷新。"""
 
 
 @dataclass(frozen=True)
@@ -48,6 +76,10 @@ class ServerConfig:
     announces: tuple[str, ...] = ()
     piece_length: int = DEFAULT_PIECE_LENGTH
     template: str = DEFAULT_TEMPLATE
+    database: Path = DEFAULT_DATABASE
+    """资源候选与下载状态（SQLite）。"""
+    qbit: QbitConfig | None = None
+    jackett: JackettConfig | None = None
 
 
 # 允许的键与类型：(表名, 键名) → 类型。表名为空表示顶层。
@@ -68,6 +100,19 @@ _SCHEMA: dict[tuple[str, str], type | tuple[type, ...]] = {
     ("torrent", "announces"): list,
     ("torrent", "piece_length"): int,
     ("post", "template"): str,
+    ("", "database"): str,
+    ("qbittorrent", "url"): str,
+    ("qbittorrent", "username"): str,
+    ("qbittorrent", "password"): str,
+    ("qbittorrent", "category"): str,
+    ("qbittorrent", "save_path"): str,
+    ("qbittorrent", "path_map"): dict,
+    ("qbittorrent", "interval"): int,
+    ("jackett", "url"): str,
+    ("jackett", "api_key"): str,
+    ("jackett", "indexer"): str,
+    ("jackett", "queries"): list,
+    ("jackett", "interval"): int,
 }
 
 
@@ -157,6 +202,59 @@ def _read(path: Path | None) -> dict[tuple[str, str], Any]:
         raise ConfigError(f"配置文件格式有误：{error}") from None
 
 
+def _http_url(value: str, name: str) -> str:
+    if not value.startswith(("http://", "https://")):
+        raise ConfigError(f"{name} 必须以 http:// 或 https:// 开头")
+    return value.rstrip("/")
+
+
+def _qbit_config(flat: dict[tuple[str, str], Any]) -> QbitConfig | None:
+    url = flat.get(("qbittorrent", "url"), "").strip()
+    if not url:
+        return None
+    path_map = flat.get(("qbittorrent", "path_map"), {})
+    for remote, local in path_map.items():
+        if not isinstance(local, str) or not remote.startswith("/") or not local.startswith("/"):
+            raise ConfigError("qbittorrent.path_map 的两边都必须是绝对路径，例如 { \"/downloads\" = \"/media/downloads\" }")
+    interval = flat.get(("qbittorrent", "interval"), 60)
+    if interval < 10:
+        raise ConfigError("qbittorrent.interval 不能小于 10 秒")
+    category = flat.get(("qbittorrent", "category"), "whatdvd").strip()
+    if not category:
+        raise ConfigError("qbittorrent.category 不能为空")
+    return QbitConfig(
+        url=_http_url(url, "qbittorrent.url"),
+        username=flat.get(("qbittorrent", "username"), ""),
+        password=flat.get(("qbittorrent", "password"), "") or os.environ.get(QB_PASSWORD_ENV, ""),
+        category=category,
+        save_path=flat.get(("qbittorrent", "save_path"), "").strip() or None,
+        path_map=tuple((remote.rstrip("/") or "/", local.rstrip("/") or "/") for remote, local in path_map.items()),
+        interval=interval,
+    )
+
+
+def _jackett_config(flat: dict[tuple[str, str], Any]) -> JackettConfig | None:
+    url = flat.get(("jackett", "url"), "").strip()
+    if not url:
+        return None
+    api_key = flat.get(("jackett", "api_key"), "").strip() or os.environ.get(JACKETT_KEY_ENV, "").strip()
+    if not api_key:
+        raise ConfigError(f"使用 Jackett 需要 jackett.api_key（或环境变量 {JACKETT_KEY_ENV}）")
+    queries = flat.get(("jackett", "queries"), ["DVD9", "DVD5"])
+    if not queries or not all(isinstance(q, str) and q.strip() for q in queries):
+        raise ConfigError("jackett.queries 必须是非空字符串列表")
+    interval = flat.get(("jackett", "interval"), 60)
+    if interval != 0 and interval < 10:
+        raise ConfigError("jackett.interval 不能小于 10 分钟（0 为只手动刷新）")
+    return JackettConfig(
+        url=_http_url(url, "jackett.url"),
+        api_key=api_key,
+        indexer=flat.get(("jackett", "indexer"), "all").strip() or "all",
+        queries=tuple(q.strip() for q in queries),
+        interval=interval,
+    )
+
+
 def load_config(
     path: Path | None = None,
     *,
@@ -209,6 +307,9 @@ def load_config(
 
     temp_dir = flat.get(("", "temp_dir"))
     return ServerConfig(
+        database=_expand(flat.get(("", "database"), str(DEFAULT_DATABASE))).absolute(),
+        qbit=_qbit_config(flat),
+        jackett=_jackett_config(flat),
         roots=tuple(resolved_roots),
         output_dir=_expand(flat.get(("", "output_dir"), str(DEFAULT_OUTPUT_DIR))).absolute(),
         token=token.token,

@@ -140,3 +140,65 @@ def test_token_command(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> No
     assert f"登录链接：http://127.0.0.1:30002/?token={token}" in first
     assert main(["token", "-c", str(config)]) == 0
     assert f"token：{token}（保存在 {tmp_path}/token）" in capsys.readouterr().out
+
+
+def test_qbittorrent_and_jackett(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = tmp_path / "media"
+    root.mkdir()
+    monkeypatch.setenv("WHATDVD_QB_PASSWORD", "from-env")
+    monkeypatch.setenv("WHATDVD_JACKETT_API_KEY", "key-from-env")
+    config = load_config(
+        write(
+            tmp_path,
+            f"""
+roots = ["{root}"]
+token = "t"
+database = "{tmp_path}/state.db"
+
+[qbittorrent]
+url = "http://qb:8080/"
+username = "admin"
+path_map = {{ "/downloads/" = "/media/qb/" }}
+interval = 30
+
+[jackett]
+url = "http://jackett:9117"
+indexer = "rutracker"
+queries = ["DVD9"]
+interval = 0
+""",
+        )
+    )
+    assert config.database == tmp_path / "state.db"
+    assert config.qbit is not None and config.jackett is not None
+    assert (config.qbit.url, config.qbit.password, config.qbit.category) == ("http://qb:8080", "from-env", "whatdvd")
+    assert config.qbit.path_map == (("/downloads", "/media/qb"),)
+    assert (config.jackett.api_key, config.jackett.indexer, config.jackett.queries) == ("key-from-env", "rutracker", ("DVD9",))
+    assert config.jackett.interval == 0
+
+
+def test_without_qbittorrent_and_jackett(tmp_path: Path) -> None:
+    root = tmp_path / "media"
+    root.mkdir()
+    config = load_config(write(tmp_path, f'roots = ["{root}"]\ntoken = "t"\n'))
+    assert config.qbit is None and config.jackett is None
+
+
+@pytest.mark.parametrize(
+    ("section", "message"),
+    [
+        ('[qbittorrent]\nurl = "qb:8080"', "必须以 http://"),
+        ('[qbittorrent]\nurl = "http://qb"\npath_map = { "downloads" = "/media" }', "绝对路径"),
+        ('[qbittorrent]\nurl = "http://qb"\ninterval = 5', "不能小于 10 秒"),
+        ('[qbittorrent]\nurl = "http://qb"\ncategory = " "', "category 不能为空"),
+        ('[jackett]\nurl = "http://jackett"', "api_key"),
+        ('[jackett]\nurl = "http://j"\napi_key = "k"\nqueries = []', "非空字符串列表"),
+        ('[jackett]\nurl = "http://j"\napi_key = "k"\ninterval = 5', "不能小于 10 分钟"),
+        ('[jackett]\nurl = "http://j"\napi_key = "k"\nunknown = 1', "未知的配置项"),
+    ],
+)
+def test_invalid_qbittorrent_and_jackett(tmp_path: Path, section: str, message: str) -> None:
+    root = tmp_path / "media"
+    root.mkdir()
+    with pytest.raises(ConfigError, match=message):
+        load_config(write(tmp_path, f'roots = ["{root}"]\ntoken = "t"\n{section}\n'))

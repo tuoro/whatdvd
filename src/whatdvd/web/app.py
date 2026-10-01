@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import secrets
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from importlib.resources import files
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -20,11 +21,15 @@ from ..post import DEFAULT_TEMPLATE
 from ..runner import Runner, SubprocessRunner
 from ..sources import find_sources, is_iso
 from ..checks import describe_extra_files, find_extra_files
+from ..indexer import Jackett
+from ..qbit import QBittorrent
+from ..store import Status, Store
 from ..torrent import PIECE_LENGTH_RANGE, make_torrent
 from ..upload import Pixhost
 from ..workflow import HostFactory, RunOptions, RunResult, check_tools, output_title, run
 from .config import ServerConfig
 from .jobs import Job, JobManager, JobReporter, stream_events
+from .watcher import Watcher, WatcherError
 
 COOKIE = "whatdvd_token"
 COOKIE_MAX_AGE = 30 * 24 * 3600
@@ -139,16 +144,62 @@ def _serialize_run(result: RunResult) -> dict[str, Any]:
     return {"ok": result.ok, "discs": discs, "post_file": post_file, "post": post_text, "files": names}
 
 
+RELEASE_GROUPS: dict[str, tuple[Status, ...]] = {
+    "new": ("new",),
+    "active": ("sent", "downloading", "processing"),
+    "finished": ("done", "failed"),
+    "ignored": ("ignored",),
+}
+
+
 def create_app(
     config: ServerConfig,
     *,
     runner: Runner | None = None,
     host_factory: HostFactory | None = None,
+    qbit: QBittorrent | None = None,
+    jackett: Jackett | None = None,
+    background: bool = True,
 ) -> FastAPI:
+    """qbit / jackett 不传时按配置创建；background=False 时不启动后台轮询（测试用）。"""
     runner = runner or SubprocessRunner()
     host_factory = host_factory or (lambda: Pixhost(config.pixhost_domain, proxy=config.proxy))
-    app = FastAPI(title="whatdvd", docs_url=None, redoc_url=None, openapi_url=None)
+    if qbit is None and config.qbit is not None:
+        qbit = QBittorrent(config.qbit.url, config.qbit.username, config.qbit.password)
+    if jackett is None and config.jackett is not None:
+        jackett = Jackett(config.jackett.url, config.jackett.api_key, indexer=config.jackett.indexer)
+
     manager = JobManager(config.max_jobs)
+    watcher: Watcher | None = None
+
+    @contextlib.asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        nonlocal watcher
+        task = None
+        if qbit is not None or jackett is not None:
+            watcher = Watcher(
+                config,
+                Store(config.database),
+                submit_run=submit_run,
+                get_job=manager.get,
+                qbit=qbit,
+                jackett=jackett,
+            )
+            app.state.watcher = watcher
+            if background:
+                task = asyncio.create_task(watcher.run_forever())
+        try:
+            yield
+        finally:
+            if task is not None:
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+            if watcher is not None:
+                watcher.close()
+                watcher.store.close()
+
+    app = FastAPI(title="whatdvd", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.jobs = manager
 
     @app.middleware("http")
@@ -243,7 +294,78 @@ def create_app(
             "max_jobs": config.max_jobs,
             "proxy": bool(config.proxy),
             "custom_template": config.template != DEFAULT_TEMPLATE,
+            "qbit": {"url": config.qbit.url, "category": config.qbit.category, "path_map": config.qbit.path_map}
+            if config.qbit
+            else None,
+            "jackett": {"url": config.jackett.url, "indexer": config.jackett.indexer, "queries": config.jackett.queries,
+                        "interval": config.jackett.interval}
+            if config.jackett
+            else None,
         }
+
+    # ---------- 资源候选（Jackett + qBittorrent） ----------
+
+    def get_watcher() -> Watcher:
+        if watcher is None:
+            raise HTTPException(404, "没有配置 Jackett 或 qBittorrent")
+        return watcher
+
+    def watcher_error(error: WatcherError) -> HTTPException:
+        return HTTPException(409, str(error))
+
+    @app.get("/api/releases", dependencies=auth)
+    async def list_releases(group: Literal["new", "active", "finished", "ignored"] = "new") -> dict[str, Any]:
+        current = get_watcher()
+        counts = {name: len(current.store.list(statuses)) for name, statuses in RELEASE_GROUPS.items()}
+        records = current.store.list(RELEASE_GROUPS[group])
+        return {"releases": [r.public() for r in records], "counts": counts, "status": current.status()}
+
+    @app.post("/api/releases/refresh", dependencies=auth)
+    async def refresh_releases() -> dict[str, Any]:
+        current = get_watcher()
+        try:
+            added = await current.search()
+        except WatcherError as error:
+            raise watcher_error(error) from None
+        return {"added": added}
+
+    @app.post("/api/releases/sync", dependencies=auth, status_code=204)
+    async def sync_releases() -> None:
+        try:
+            await get_watcher().sync()
+        except WatcherError as error:
+            raise watcher_error(error) from None
+
+    def release_or_404(release_id: str) -> Any:
+        record = get_watcher().store.get(release_id)
+        if record is None:
+            raise HTTPException(404, "找不到这个资源")
+        return record
+
+    @app.post("/api/releases/{release_id}/download", dependencies=auth)
+    async def download_release(release_id: str) -> dict[str, Any]:
+        release_or_404(release_id)
+        try:
+            record = await get_watcher().download(release_id)
+        except WatcherError as error:
+            raise watcher_error(error) from None
+        return record.public()
+
+    @app.post("/api/releases/{release_id}/reprocess", dependencies=auth)
+    async def reprocess_release(release_id: str) -> dict[str, Any]:
+        release_or_404(release_id)
+        try:
+            record = await get_watcher().reprocess(release_id)
+        except WatcherError as error:
+            raise watcher_error(error) from None
+        return record.public()
+
+    @app.post("/api/releases/{release_id}/ignore", dependencies=auth)
+    async def ignore_release(release_id: str, undo: bool = False) -> dict[str, Any]:
+        record = release_or_404(release_id)
+        if record.status not in (("ignored",) if undo else ("new",)):
+            raise HTTPException(409, "只有候选可以忽略，只有已忽略的可以恢复")
+        return get_watcher().store.update(release_id, status="new" if undo else "ignored").public()
 
     @app.get("/api/source", dependencies=auth)
     async def source(path: str) -> dict[str, Any]:
@@ -322,15 +444,18 @@ def create_app(
             "files": [output.name],
         }
 
+    def submit_run(path: Path, count: int | None = None, upload: bool = True) -> Job:
+        params: dict[str, Any] = {"count": count or config.screenshot_count, "upload": upload}
+        return manager.submit(Job("run", path, params, config.output_dir / output_title(path)), run_worker)
+
     @app.post("/api/jobs", dependencies=auth, status_code=201)
     async def create_job(body: JobRequest) -> dict[str, Any]:
         path = resolve_allowed(body.path)
         output_dir = config.output_dir / output_title(path)
         if isinstance(body, RunRequest):
-            params: dict[str, Any] = {"count": body.count, "upload": body.upload}
-            job = manager.submit(Job("run", path, params, output_dir), run_worker)
+            job = submit_run(path, body.count, body.upload)
         else:
-            params = {"announces": body.announces, "piece_length": body.piece_length}
+            params: dict[str, Any] = {"announces": body.announces, "piece_length": body.piece_length}
             job = manager.submit(Job("torrent", path, params, output_dir), torrent_worker)
         return job.summary()
 

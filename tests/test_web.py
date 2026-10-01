@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
@@ -277,3 +278,69 @@ def test_finished_job_has_full_progress(authed: TestClient, media: Path) -> None
     body = {"kind": "torrent", "path": str(media / "Movie A"), "announces": [], "piece_length": 24}
     job = wait_job(authed, authed.post("/api/jobs", json=body).json()["id"])
     assert job["progress"] == 1.0
+
+
+# ---------- 资源（Jackett + qBittorrent） ----------
+
+
+def test_releases_disabled_without_config(authed: TestClient) -> None:
+    assert authed.get("/api/releases").status_code == 404
+    config = authed.get("/api/config").json()
+    assert config["qbit"] is None and config["jackett"] is None
+
+
+def test_releases_flow(tmp_path: Path, media: Path) -> None:
+    from test_watcher import FakeServices
+
+    from whatdvd.indexer import Jackett
+    from whatdvd.qbit import QBittorrent
+    from whatdvd.web.config import JackettConfig, QbitConfig
+
+    services = FakeServices()
+    transport = httpx.MockTransport(services)
+    config = ServerConfig(
+        roots=(media.resolve(),),
+        output_dir=tmp_path / "out",
+        token=TOKEN,
+        database=tmp_path / "state.db",
+        qbit=QbitConfig("http://qb:8080", "admin", "qb-password", category="whatdvd"),
+        jackett=JackettConfig("http://jackett", "jackett-secret-key", indexer="rutor"),
+    )
+    app = create_app(
+        config,
+        runner=FakeRunner(fake_mktorrent),
+        qbit=QBittorrent("http://qb:8080", "admin", "qb-password", transport=transport),
+        jackett=Jackett("http://jackett", "jackett-secret-key", indexer="rutor", transport=transport),
+        background=False,
+    )
+    with TestClient(app, headers={"Authorization": f"Bearer {TOKEN}"}) as client:
+        settings = client.get("/api/config").json()
+        assert settings["jackett"]["indexer"] == "rutor" and settings["qbit"]["category"] == "whatdvd"
+        assert "qb-password" not in str(settings) and "jackett-secret-key" not in str(settings)
+
+        assert client.post("/api/releases/refresh").json() == {"added": 2}
+        data = client.get("/api/releases").json()
+        assert data["counts"] == {"new": 2, "active": 0, "finished": 0, "ignored": 0}
+        assert data["status"]["jackett"] and data["status"]["qbit"]
+        assert "download_url" not in data["releases"][0]
+        assert "jackett-secret-key" not in str(data)
+
+        first, second = (r["id"] for r in data["releases"])
+        assert client.post(f"/api/releases/{second}/ignore").json()["status"] == "ignored"
+        assert client.post(f"/api/releases/{second}/ignore").status_code == 409
+        assert client.post(f"/api/releases/{second}/ignore?undo=true").json()["status"] == "new"
+
+        response = client.post(f"/api/releases/{first}/download")
+        assert response.status_code == 200 and response.json()["status"] == "sent"
+        assert client.post(f"/api/releases/{first}/download").status_code == 409
+        assert client.get("/api/releases?group=active").json()["counts"]["active"] == 1
+
+        # 下载完成，路径不在 roots 内：标记失败，不处理
+        services.torrent(response.json()["info_hash"], "stalledUP", 1.0, "/somewhere/else")
+        assert client.post("/api/releases/sync").status_code == 204
+        failed = client.get("/api/releases?group=finished").json()["releases"][0]
+        assert failed["status"] == "failed" and "roots" in failed["error"]
+
+        assert client.post("/api/releases/missing/download").status_code == 404
+        assert client.post(f"/api/releases/{second}/reprocess").status_code == 409
+    assert TestClient(app).get("/api/releases").status_code == 401  # 需要登录

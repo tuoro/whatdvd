@@ -25,6 +25,8 @@ const ICONS = {
   gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   logout: '<path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4"/><path d="M10 16l-4-4 4-4"/><path d="M6 12h10"/>',
   alert: '<circle cx="12" cy="12" r="9"/><path d="M12 7.5v5.5"/><path d="M12 16.5h.01"/>',
+  search: '<circle cx="11" cy="11" r="6.5"/><path d="M20 20l-4.3-4.3"/>',
+  refresh: '<path d="M20 11a8 8 0 1 0-2.3 5.7"/><path d="M20 5v6h-6"/>',
 };
 
 const state = {
@@ -39,6 +41,7 @@ const state = {
   opts: null,           // 表单选项，在各页面之间共享
   pollTimer: null,
   toastTimer: null,
+  releaseTimer: null,
 };
 
 class AuthError extends Error {}
@@ -734,7 +737,167 @@ function showSettings() {
       row("默认 Tracker", c.announces.join("\n") || "无"),
       row("默认分块", `${pieceLabel(c.piece_length)}（2^${c.piece_length}）`),
       row("发布说明模板", c.custom_template ? "自定义模板" : "默认 BBCode"),
+      row("Jackett", c.jackett
+        ? `${c.jackett.url}，站点 ${c.jackett.indexer === "all" ? "全部" : c.jackett.indexer}，搜索 ${c.jackett.queries.join("、")}，${c.jackett.interval ? `每 ${c.jackett.interval} 分钟` : "只手动刷新"}`
+        : "未配置"),
+      row("qBittorrent", c.qbit
+        ? `${c.qbit.url}，分类 ${c.qbit.category}${c.qbit.path_map.length ? `\n路径映射：${c.qbit.path_map.map(([a, b]) => `${a} → ${b}`).join("，")}` : ""}`
+        : "未配置"),
       row("配置文件", "~/.config/whatdvd/config.toml，或启动时用 -c 指定"))));
+}
+
+// ---------- 资源（Jackett 候选 + qBittorrent 下载） ----------
+
+const RELEASE_TABS = [["new", "候选"], ["active", "进行中"], ["finished", "已完成"], ["ignored", "已忽略"]];
+const RELEASE_STATUS = {
+  new: ["候选", ""], ignored: ["已忽略", ""], sent: ["已推送", "queued"], downloading: ["下载中", "running"],
+  processing: ["处理中", "running"], done: ["完成", "done"], failed: ["失败", "failed"],
+};
+const RELEASE_EMPTY = {
+  new: "还没有候选。点“立即搜索”从 Jackett 搜索 DVD 原盘。",
+  active: "没有正在下载或处理的资源。",
+  finished: "还没有处理完的资源。",
+  ignored: "没有忽略的资源。",
+};
+
+function releasesEnabled() {
+  return Boolean(state.config && (state.config.qbit || state.config.jackett));
+}
+
+async function refreshReleaseCount(counts) {
+  if (!releasesEnabled()) return;
+  if (!counts) {
+    try { counts = (await api("/api/releases?group=ignored")).counts; } catch { return; }
+  }
+  $("release-count").textContent = counts.new ? String(counts.new) : "";
+}
+
+function scheduleReleasePoll(group, busy) {
+  clearTimeout(state.releaseTimer);
+  state.releaseTimer = setTimeout(() => {
+    if (state.route && state.route.name === "releases" && state.route.group === group) showReleases(group, true);
+  }, busy ? 4000 : 30000);
+}
+
+async function showReleases(group, quiet = false) {
+  state.selected = null;
+  if (!quiet && state.listing) renderListing();
+  const data = await api(`/api/releases?group=${group}`);
+  if (!state.route || state.route.name !== "releases" || state.route.group !== group) return;
+  // 轮询刷新时，用户正在操作的按钮不要被重绘打断
+  if (quiet && document.querySelector("#main [data-busy]")) {
+    scheduleReleasePoll(group, true);
+    return;
+  }
+  renderReleases(group, data);
+  refreshReleaseCount(data.counts);
+  const busy = data.status.searching || data.counts.active > 0;
+  scheduleReleasePoll(group, busy);
+}
+
+function renderReleases(group, data) {
+  const s = data.status;
+  const c = state.config;
+  const meta = [
+    h("span", {}, s.jackett ? `Jackett：${c.jackett.indexer === "all" ? "全部站点" : c.jackett.indexer}` : "未配置 Jackett"),
+    s.jackett ? h("span", {}, s.last_search ? `上次搜索 ${clock(s.last_search)}，新增 ${s.last_added} 个` : "还没有搜索") : null,
+    h("span", {}, s.qbit ? `qBittorrent 分类 ${c.qbit.category}` : "未配置 qBittorrent"),
+  ].filter(Boolean);
+  const search = h("button", { type: "button", class: "btn amber", disabled: !s.jackett || s.searching },
+    icon("search"), s.searching ? "搜索中…" : "立即搜索");
+  search.addEventListener("click", () => releaseRequest(search, "/api/releases/refresh", (r) => `新增 ${r.added} 个候选`));
+  const sync = h("button", { type: "button", class: "btn glass", disabled: !s.qbit }, icon("refresh"), "检查下载");
+  sync.addEventListener("click", () => releaseRequest(sync, "/api/releases/sync", () => "已检查 qBittorrent"));
+
+  const tabs = h("div", { class: "tabs", role: "tablist" }, RELEASE_TABS.map(([name, label]) =>
+    h("a", { role: "tab", href: `#/releases/${name}`, "aria-selected": String(name === group) },
+      label, h("span", { class: "count" }, data.counts[name] || ""))));
+
+  const problems = [];
+  if (s.search_error) problems.push(notice("bad", `Jackett：${s.search_error}`));
+  if (s.sync_error) problems.push(notice("bad", `qBittorrent：${s.sync_error}`));
+
+  const list = data.releases.length
+    ? h("ul", { class: "releases" }, data.releases.map((r) => releaseRow(r, s)))
+    : notice("", RELEASE_EMPTY[group]);
+
+  setMain(
+    hero({ eyebrow: "资源", title: "DVD 原盘", compact: true, meta, children: [h("div", { class: "actions" }, search, sync)] }),
+    h("div", { class: "content" }, h("div", {}, tabs), ...problems, list));
+}
+
+function releaseRow(r, s) {
+  const [statusText, statusCls] = RELEASE_STATUS[r.status] || [r.status, ""];
+  // 详情页地址来自站点，只接受 http(s)
+  const title = r.details_url && /^https?:\/\//i.test(r.details_url)
+    ? h("a", { class: "title", href: r.details_url, target: "_blank", rel: "noopener noreferrer", title: "打开发布页" }, r.title)
+    : h("span", { class: "title" }, r.title);
+  const facts = [
+    r.source,
+    r.kind,
+    r.size ? formatBytes(r.size) : null,
+    r.published ? new Date(r.published * 1000).toLocaleDateString("zh-CN") : null,
+    r.seeders !== null && r.seeders !== undefined ? `${r.seeders} 做种` : null,
+  ].filter(Boolean);
+
+  const side = [];
+  const button = (label, cls, url, done) => {
+    const b = h("button", { type: "button", class: `btn small ${cls}` }, label);
+    b.addEventListener("click", () => releaseRequest(b, url, done));
+    return b;
+  };
+  const base = `/api/releases/${encodeURIComponent(r.id)}`;
+  if (r.status === "new") {
+    const download = button("下载", "amber", `${base}/download`, () => "已推送到 qBittorrent");
+    if (!s.qbit) { download.disabled = true; download.title = "没有配置 qBittorrent"; }
+    side.push(download, button("忽略", "glass", `${base}/ignore`, () => "已忽略"));
+  } else if (r.status === "ignored") {
+    side.push(button("恢复", "glass", `${base}/ignore?undo=true`, () => "已恢复到候选"));
+  } else if (r.status === "sent" || r.status === "downloading") {
+    const pct = Math.round((r.progress || 0) * 100);
+    side.push(h("span", { class: `pill ${statusCls}` }, r.status === "sent" ? statusText : `${statusText} ${pct}%`));
+  } else {
+    side.push(h("span", { class: `pill ${statusCls}` }, statusText));
+    if (r.job_id && state.jobs.some((j) => j.id === r.job_id)) {
+      side.push(h("a", { class: "btn small glass", href: `#/job/${r.job_id}` }, r.status === "processing" ? "查看进度" : "查看结果"));
+    }
+    if (r.status === "failed") {
+      if (r.local_path) side.push(button("重新处理", "glass", `${base}/reprocess`, () => "已重新开始处理"));
+      else if (s.qbit) side.push(button("重新下载", "glass", `${base}/download`, () => "已推送到 qBittorrent"));
+    }
+  }
+
+  const notes = (r.warnings || []).map((w) => h("span", { class: "chip warn" }, w));
+  const extra = [];
+  if (r.status === "sent" || r.status === "downloading") {
+    const bar = h("div", { class: "bar" }, h("i", {}));
+    bar.firstChild.style.width = `${Math.round((r.progress || 0) * 100)}%`;
+    extra.push(bar);
+  }
+  if (r.error) extra.push(h("p", { class: "release-error" }, r.error));
+  if (r.status === "done" && r.output_dir) {
+    extra.push(h("p", { class: "release-path" }, `输出：${r.output_dir}${r.post_file ? `/${r.post_file}` : ""}`));
+  }
+  return h("li", { class: "release" },
+    h("div", { class: "info" }, title, h("div", { class: "release-facts" }, facts.map((f) => h("span", {}, f))),
+      notes.length ? h("div", { class: "chips" }, notes) : null, ...extra),
+    h("div", { class: "side" }, side));
+}
+
+async function releaseRequest(button, url, done) {
+  button.disabled = true;
+  button.dataset.busy = "1";
+  try {
+    const result = await api(url, { method: "POST" });
+    toast(done(result || {}));
+  } catch (error) {
+    if (error instanceof AuthError) return;
+    toast(error.message);
+  } finally {
+    delete button.dataset.busy;
+  }
+  await refreshJobs();
+  if (state.route && state.route.name === "releases") await showReleases(state.route.group, true);
 }
 
 const ASPECT_LABELS = {
@@ -757,18 +920,26 @@ function parseRoute() {
   const job = hash.match(/^job\/([0-9a-f]+)(\/log)?$/);
   if (job) return { name: "job", id: job[1], tab: job[2] ? "log" : "result" };
   if (hash === "settings") return { name: "settings" };
+  const releases = hash.match(/^releases(?:\/(new|active|finished|ignored))?$/);
+  if (releases) return { name: "releases", group: releases[1] || "new" };
   return { name: "home" };
 }
 
 async function route() {
   closeStream();
+  clearTimeout(state.releaseTimer);
   state.route = parseRoute();
   $("nav-settings").setAttribute("aria-current", state.route.name === "settings" ? "page" : "false");
+  $("nav-releases").setAttribute("aria-current", state.route.name === "releases" ? "page" : "false");
   window.scrollTo(0, 0);
   try {
     if (state.route.name === "browse") await showSource(state.route.path);
     else if (state.route.name === "job") await showJob(state.route.id, state.route.tab);
     else if (state.route.name === "settings") showSettings();
+    else if (state.route.name === "releases") {
+      if (!releasesEnabled()) throw new Error("没有配置 Jackett 或 qBittorrent，资源页不可用。请在配置文件中设置 [jackett] 和 [qbittorrent]。");
+      await showReleases(state.route.group);
+    }
     else {
       if (state.config.roots.length === 1) {
         location.replace(`#/browse/${encodeURIComponent(state.config.roots[0])}`);
@@ -800,6 +971,8 @@ async function start() {
   state.opts = state.opts || { count: c.screenshot_count, upload: true, tracker: c.announces.join(" "), piece: c.piece_length };
   $("login").hidden = true;
   $("app").hidden = false;
+  $("nav-releases").hidden = !releasesEnabled();
+  refreshReleaseCount();
   await refreshJobs();
   if (!state.listing) {
     try { await loadListing(c.roots.length === 1 ? c.roots[0] : null); } catch { /* route() 会显示错误 */ }

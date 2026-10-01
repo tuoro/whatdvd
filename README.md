@@ -58,6 +58,36 @@ whatdvd token                                           # 查看登录 token 和
 - 界面中可以选择 DVD 文件夹、ISO 或包含多张盘的目录，生成截图和 MediaInfo（上传图床并生成发布说明），或者做种；日志实时显示，发布说明和 MediaInfo 可一键复制，种子可直接下载。
 - 任务排队执行，默认同一时间只运行一个（`max_jobs`）。任务记录保存在内存中，重启服务后清空，输出文件保留在 `output_dir`。
 
+## 资源获取（Jackett + qBittorrent，可选）
+
+通过 [Jackett](https://github.com/Jackett/Jackett) 搜索 rutracker、rutor、kinozal 等站点上的 DVD 原盘，在界面中挑选后推送到 qBittorrent，下载完成后自动走完整流程（截图、MediaInfo、上传图床、发布说明）。whatdvd 只对接两者的 API，不负责部署。
+
+```toml
+[qbittorrent]
+url = "http://127.0.0.1:8080"
+username = "admin"
+password = ""            # 或环境变量 WHATDVD_QB_PASSWORD
+category = "whatdvd"
+path_map = { "/downloads" = "/home/me/downloads" }   # qB 中的路径 = whatdvd 中的路径，两边一致时不用填
+
+[jackett]
+url = "http://127.0.0.1:9117"
+api_key = ""             # 或环境变量 WHATDVD_JACKETT_API_KEY
+indexer = "all"          # 或某个站点，例如 rutracker
+queries = ["DVD9", "DVD5"]
+interval = 60            # 每 60 分钟自动搜索；0 为只手动搜索
+```
+
+- 界面左侧出现“资源”入口：候选、进行中、已完成、已忽略。
+- **只列候选，点了“下载”才推送**：种子文件经 Jackett 取得（站点只给磁力链接时用磁力链接），添加到 qB 的 `category` 分类并打上 `whatdvd` 标签。
+- **过滤**：标题中没有 DVD5 / DVD9 的、Custom（改制过的盘）、`сжатый`（压缩过的盘）、`Реставрация`（修复版）、各种 Rip / Remux / 高清格式直接排除。以下情况保留但加提示，由你判断：
+  - 带俄语配音标记（`| D, P, A, L1` 等）：可能加过俄语音轨，不一定是原盘。
+  - 体积超出盘数容量：可能是合集或标错了。
+  - `Лицензия`（俄罗斯正版盘）、全屏 / Pan & Scan 版本、没有做种者。
+- **自动处理**：定时检查 qB 中这个分类的种子，下载完成后按 `path_map` 换成本机路径，在 `roots` 之内才处理。在 qB 中手动添加到这个分类的种子也会自动处理。
+- 状态保存在 `database`（SQLite）中，重启后保留；重启时正在处理的任务会标为失败，可以点“重新处理”。
+- 做种由 qB 继续负责，whatdvd 不删除、不移动下载的文件。
+
 ## Docker
 
 镜像基于 Debian 12，以普通用户（uid 1000）运行，不需要 `privileged`，也不 mount ISO。

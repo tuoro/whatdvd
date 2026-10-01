@@ -1,0 +1,183 @@
+import httpx
+import pytest
+
+from whatdvd.indexer import DVD9_MAX_BYTES, IndexerError, Jackett, classify, parse_torznab
+
+# 结构同 Jackett 1.x 对 rutor 的 Torznab 输出，标题和链接为虚构
+FEED = """<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom" xmlns:torznab="http://torznab.com/schemas/2015/feed">
+  <channel>
+    <title>RuTor</title>
+    <item>
+      <title>Фильм / Some Film (2002) DVD9 | P -Custom</title>
+      <guid>https://d.rutor.info/download/1</guid>
+      <jackettindexer id="rutor">RuTor</jackettindexer>
+      <comments>https://rutor.info/torrent/1/some-film</comments>
+      <pubDate>Thu, 20 Aug 2026 21:00:00 +0000</pubDate>
+      <size>7945689497</size>
+      <link>http://jackett:9117/dl/rutor/?jackett_apikey=KEY&amp;path=abc&amp;file=Some+Film</link>
+      <enclosure url="http://jackett:9117/dl/rutor/?jackett_apikey=KEY&amp;path=abc" length="7945689497" type="application/x-bittorrent" />
+      <torznab:attr name="seeders" value="3" />
+      <torznab:attr name="infohash" value="56D11DB8EB76B75BBE6BBD12A61400BA6E50FF71" />
+      <torznab:attr name="magneturl" value="magnet:?xt=urn:btih:56d11db8eb76b75bbe6bbd12a61400ba6e50ff71&amp;dn=x" />
+    </item>
+    <item>
+      <title>Other Film (1999) DVD5</title>
+      <guid>https://d.rutor.info/download/2</guid>
+      <size>4000000000</size>
+    </item>
+  </channel>
+</rss>"""
+
+
+def test_parse_torznab() -> None:
+    first, second = parse_torznab(FEED)
+    assert first.title == "Фильм / Some Film (2002) DVD9 | P -Custom"
+    assert first.indexer == "RuTor" and first.size == 7945689497 and first.seeders == 3
+    assert first.info_hash == "56d11db8eb76b75bbe6bbd12a61400ba6e50ff71"
+    assert first.magnet is not None and first.magnet.startswith("magnet:?xt=urn:btih:56d1")
+    assert first.details_url == "https://rutor.info/torrent/1/some-film"
+    assert first.download_url == "http://jackett:9117/dl/rutor/?jackett_apikey=KEY&path=abc&file=Some+Film"
+    assert first.published == 1787259600.0
+    # 缺字段时的默认值；没有 jackettindexer 时用频道名
+    assert (second.indexer, second.published, second.magnet, second.info_hash, second.seeders) == (
+        "RuTor", None, None, None, None
+    )
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        ('<?xml version="1.0"?><error code="100" description="Invalid API Key" />', "Invalid API Key"),
+        ('<error code="201" description="Indexer is not configured" />', "Indexer is not configured"),
+        ("not xml", "无法解析"),
+    ],
+)
+def test_parse_torznab_errors(body: str, message: str) -> None:
+    with pytest.raises(IndexerError, match=message):
+        parse_torznab(body)
+
+
+def _jackett(handler: httpx.MockTransport) -> Jackett:
+    return Jackett("http://jackett:9117/", "KEY", indexer="rutor", transport=handler)
+
+
+def test_search_request() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, text=FEED)
+
+    assert len(_jackett(httpx.MockTransport(handler)).search("DVD9")) == 2
+    url = seen[0].url
+    assert url.path == "/api/v2.0/indexers/rutor/results/torznab/api"
+    assert dict(url.params) == {"apikey": "KEY", "t": "search", "q": "DVD9"}
+
+
+@pytest.mark.parametrize(
+    ("response", "message"),
+    [
+        (httpx.Response(500, json={"result": "error", "error": "Unknown indexer: rutor"}), "Unknown indexer"),
+        (httpx.Response(400, text='<error code="100" description="Invalid API Key" />'), "Invalid API Key"),
+        (httpx.Response(502, text="Bad Gateway"), "HTTP 502"),
+    ],
+)
+def test_search_errors(response: httpx.Response, message: str) -> None:
+    with pytest.raises(IndexerError, match=message):
+        _jackett(httpx.MockTransport(lambda request: response)).search("DVD9")
+
+
+def test_search_unreachable() -> None:
+    def fail(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("refused", request=request)
+
+    with pytest.raises(IndexerError, match="连不上 Jackett"):
+        _jackett(httpx.MockTransport(fail)).search("DVD9")
+
+
+def test_fetch_torrent_and_magnet_redirect() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.params.get("path") == "magnet":
+            return httpx.Response(302, headers={"location": "magnet:?xt=urn:btih:" + "a" * 40})
+        if request.url.params.get("path") == "bad":
+            return httpx.Response(200, text="<html>login</html>")
+        return httpx.Response(200, content=b"d4:infod4:name1:aee")
+
+    jackett = _jackett(httpx.MockTransport(handler))
+    assert jackett.fetch("http://jackett:9117/dl/rutor/?path=file") == b"d4:infod4:name1:aee"
+    assert jackett.fetch("http://jackett:9117/dl/rutor/?path=magnet") == "magnet:?xt=urn:btih:" + "a" * 40
+    with pytest.raises(IndexerError, match="下载种子失败"):
+        jackett.fetch("http://jackett:9117/dl/rutor/?path=bad")
+
+
+# ---------- 过滤：标题写法来自 rutor 上 DVD5 / DVD9 搜索结果的实际格式 ----------
+
+
+@pytest.mark.parametrize(
+    ("title", "reason"),
+    [
+        ("Фильм / Film (2002) DVD9 | P -Custom", "Custom"),
+        ("Фильм / Film (1926) DVD9 | Sub-Custom", "Custom"),
+        ("Фильм / Film (2005) DVD5 | P2-сжатый", "压缩过的盘"),
+        ("Фильм / Film (2002) DVD5-Сжатый", "压缩过的盘"),
+        ("Фильм (1947) DVD5-Реставрация", "修复版"),
+        ("Film (2001) DVDRip", "不是 DVD 原盘"),
+        ("Film (2001) BDRemux 1080p", "不是 DVD 原盘"),
+        ("Film (2001) Blu-ray DVD9", "不是 DVD 原盘"),
+        ("Film (2001) WEB-DL 720p", "不是 DVD 原盘"),
+        ("Film (2001) HDTVRip", "不是 DVD 原盘"),
+        ("Film (2001) [MPEG-2]", "没有 DVD5"),
+    ],
+)
+def test_classify_excluded(title: str, reason: str) -> None:
+    verdict = classify(title, 4_000_000_000)
+    assert not verdict.accepted and verdict.reason is not None and reason in verdict.reason
+
+
+@pytest.mark.parametrize(
+    ("title", "kind", "discs"),
+    [
+        ("Фильм / Film (2002) DVD9", "DVD9", 1),
+        ("Film (2005) DVD5 | P", "DVD5", 1),
+        ("Film (2005) DVD-9", "DVD9", 1),
+        ("Film 2005 DVD9", "DVD9", 1),  # 年份不算盘数
+        ("Film (2005) 2 DVD9-FireRoke", "2×DVD9", 2),
+        ("Film (2005) 2 х DVD9", "2×DVD9", 2),  # 西里尔字母 х
+        ("Film (2005) 2xDVD9", "2×DVD9", 2),
+        ("Film (2005) DVD9+DVD5-FireRoke", "DVD9+DVD5", 2),
+        ("Film (2005) DVD9, DVD5 | Р2", "DVD9+DVD5", 2),
+        ("Film (2005) 2 DVD9 1DVD5", "2×DVD9+DVD5", 3),
+        ("Film (2005) 4 DVD9-FireRoke", "4×DVD9", 4),
+    ],
+)
+def test_classify_disc_count(title: str, kind: str, discs: int) -> None:
+    verdict = classify(title, 1)
+    assert verdict.accepted and (verdict.kind, verdict.discs) == (kind, discs)
+
+
+@pytest.mark.parametrize(
+    ("title", "note"),
+    [
+        ("Film (2002) DVD9 | D, P, A-FullScreen", "带俄语配音标记（D, P, A）"),
+        ("Film (2002) DVD5 | Р, А", "带俄语配音标记（P, A）"),  # 西里尔字母
+        ("Film (2002) DVD5 | P2, L1", "带俄语配音标记（P2, L1）"),
+        ("Film (2002) DVD9 от New-Team | D-Лицензия", "俄罗斯正版盘"),
+        ("Film (2002) DVD5 | A-PanScan", "Pan & Scan"),
+    ],
+)
+def test_classify_notes(title: str, note: str) -> None:
+    verdict = classify(title, 1)
+    assert verdict.accepted and any(note in n for n in verdict.notes), verdict.notes
+
+
+def test_classify_no_dub_note_for_other_tails() -> None:
+    assert classify("Film (2002) DVD5 | Полная версия", 1).notes == []
+    assert classify("Film (2002) DVD5 | Кармен Видео", 1).notes == []
+
+
+def test_classify_size_and_seeders() -> None:
+    assert classify("Film DVD9", DVD9_MAX_BYTES).notes == []
+    assert "体积超出 DVD9 的容量" in classify("Film DVD9", DVD9_MAX_BYTES + 1).notes[0]
+    assert classify("Film 2 DVD9", 2 * DVD9_MAX_BYTES).notes == []
+    assert classify("Film DVD5", 4_000_000_000, seeders=0).notes == ["目前没有做种者"]

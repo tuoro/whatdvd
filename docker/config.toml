@@ -9,6 +9,7 @@ output_dir = "/output"
 # ISO 解包会临时写入约 1 GB 的 VOB，放在输出卷里，避免占用容器的可写层或内存
 temp_dir = "/output/.tmp"
 max_jobs = 1
+database = "/output/.whatdvd/whatdvd.db"
 
 [screenshots]
 count = 10
@@ -26,3 +27,28 @@ proxy = ""
 [torrent]
 announces = []
 piece_length = 24
+
+# ---------- 资源获取（可选） ----------
+# 用 Jackett 搜索 DVD 原盘，在界面中点“下载”推送到 qBittorrent，下载完成后自动截图、
+# 生成 MediaInfo、上传图床和发布说明。两段都不填时不启用。
+# 只填 [qbittorrent] 时：在 qB 中添加到该分类的种子，下载完成后同样会自动处理。
+# 注意：容器里的 127.0.0.1 是容器自己。qB 和 Jackett 在宿主机上时填宿主机的局域网地址，
+# 在同一个 compose 网络里时填服务名，例如 http://qbittorrent:8080。
+
+# [qbittorrent]
+# url = "http://127.0.0.1:8080"
+# username = "admin"
+# password = ""                # 也可以用环境变量 WHATDVD_QB_PASSWORD
+# category = "whatdvd"         # 推送时使用的分类；这个分类下下载完成的种子都会自动处理
+# save_path = ""               # qB 中的保存路径；留空用分类或 qB 的默认路径
+# interval = 60                # 检查下载进度的间隔（秒）
+# # qB 和 whatdvd 看到的路径不同时（例如不在同一台机器或同一个容器）：{ qB 中的路径 = whatdvd 中的路径 }。
+# # 映射后的下载目录必须在 roots 之内，否则不会处理。
+# path_map = { "/downloads" = "/media/qb" }
+
+# [jackett]
+# url = "http://127.0.0.1:9117"
+# api_key = ""                 # Jackett 页面右上角的 API Key；也可以用环境变量 WHATDVD_JACKETT_API_KEY
+# indexer = "all"              # Jackett 中的站点 ID，例如 rutracker、rutor、kinozal；all 为全部已配置的站点
+# queries = ["DVD9", "DVD5"]   # 每次搜索的关键词
+# interval = 60                # 自动搜索的间隔（分钟）；0 为只在界面中手动搜索
