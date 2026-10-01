@@ -43,6 +43,12 @@ def _first_page(rutor: Rutor, query: str) -> list[Release]:
     return rutor.search(query)[1]
 
 
+def _rutor_step(rutor: Rutor, query: str, films_only: bool, all_pages: bool) -> Callable[[], list[Release]]:
+    if films_only:
+        return functools.partial(rutor.films, query, all_pages)
+    return functools.partial(rutor.search_all, query) if all_pages else functools.partial(_first_page, rutor, query)
+
+
 def backfill_queries(queries: Sequence[str], until: int | None = None) -> list[str]:
     """关键词 × 年份，近的年份在前。"""
     until = until or datetime.date.today().year
@@ -190,7 +196,8 @@ class Watcher:
         if "jackett" in sources and jackett is not None and self.config.jackett is not None:
             steps += [(f"Jackett「{q}」", functools.partial(jackett.search, q)) for q in self.config.jackett.queries]
         if "rutor" in sources and rutor is not None and self.config.rutor is not None:
-            steps += [(f"rutor「{q}」", functools.partial(_first_page, rutor, q)) for q in self.config.rutor.queries]
+            films = self.config.rutor.films_only
+            steps += [(f"rutor「{q}」", _rutor_step(rutor, q, films, False)) for q in self.config.rutor.queries]
         return steps
 
     def _backfill_steps(self) -> list[Step]:
@@ -203,7 +210,8 @@ class Watcher:
             ]
         if rutor is not None and self.config.rutor is not None:
             queries = [*self.config.rutor.queries, *backfill_queries(self.config.rutor.queries)]
-            steps += [(f"rutor「{q}」", functools.partial(rutor.search_all, q)) for q in queries]
+            films = self.config.rutor.films_only
+            steps += [(f"rutor「{q}」", _rutor_step(rutor, q, films, True)) for q in queries]
         return steps
 
     def _run_steps(

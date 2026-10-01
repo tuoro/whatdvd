@@ -22,7 +22,7 @@ from ..post import DEFAULT_TEMPLATE
 from ..runner import Runner, SubprocessRunner
 from ..sources import find_sources, is_iso
 from ..checks import describe_extra_files, find_extra_files
-from ..indexer import IndexerError, Jackett
+from ..indexer import FILM_CATEGORIES, IndexerError, Jackett
 from ..qbit import QBittorrent, QbitError
 from ..resolution import ASPECT_MODES
 from ..rutor import Rutor
@@ -102,6 +102,7 @@ def settings_values(c: ServerConfig) -> dict[str, Any]:
             "url": c.rutor.url if c.rutor else "",
             "queries": list(c.rutor.queries) if c.rutor else ["DVD9", "DVD5"],
             "interval": c.rutor.interval if c.rutor else 60,
+            "films_only": c.rutor.films_only if c.rutor else True,
         },
         "jackett": {
             "url": jk.url if jk else "",
@@ -109,6 +110,7 @@ def settings_values(c: ServerConfig) -> dict[str, Any]:
             "indexer": jk.indexer if jk else "all",
             "queries": list(jk.queries) if jk else list(JackettConfig.queries),
             "interval": jk.interval if jk else 60,
+            "films_only": jk.films_only if jk else True,
         },
     }
 
@@ -255,7 +257,10 @@ def create_app(
         if qb is None and c.qbit is not None:
             qb = QBittorrent(c.qbit.url, c.qbit.username, c.qbit.password)
         if jk is None and c.jackett is not None:
-            jk = Jackett(c.jackett.url, c.jackett.api_key, indexer=c.jackett.indexer, delay=JACKETT_DELAY)
+            categories = FILM_CATEGORIES if c.jackett.films_only else ()
+            jk = Jackett(
+                c.jackett.url, c.jackett.api_key, indexer=c.jackett.indexer, categories=categories, delay=JACKETT_DELAY
+            )
         if qb is None and jk is None and ru is None:
             return
         store = store or Store(c.database)

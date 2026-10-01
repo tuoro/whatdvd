@@ -385,12 +385,13 @@ def test_settings_save_applies_immediately_and_persists(settings_client: tuple[T
         "max_jobs": 2,
         "post": {"template_text": "$name\n$screenshots"},
         "qbittorrent": {"url": "http://qb:8080", "username": "admin", "password": "secret"},
-        "jackett": {"url": "http://jackett:9117", "api_key": "key", "interval": 0},
+        "jackett": {"url": "http://jackett:9117", "api_key": "key", "interval": 0, "films_only": False},
     }
     data = client.put("/api/settings", json=body).json()
     values = data["values"]
     assert values["screenshots"] == {"count": 5, "aspect": "ua", "dark_filter": False}
     assert values["qbittorrent"]["password_set"] and values["jackett"]["api_key_set"]
+    assert values["jackett"]["films_only"] is False and values["rutor"]["films_only"] is True
     assert "secret" not in json.dumps(data) and '"key"' not in json.dumps(data)
     assert "screenshots.count" in data["overridden"] and "qbittorrent.password" in data["overridden"]
 

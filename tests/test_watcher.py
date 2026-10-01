@@ -344,7 +344,8 @@ def _rutor_harness(tmp_path: Path, downloads: Path, total: int) -> tuple[Harness
 def test_rutor_quick_search_reads_first_page_only(tmp_path: Path, downloads: Path) -> None:
     h, fake = _rutor_harness(tmp_path, downloads, total=250)
     assert h.run(h.watcher.search) == 100
-    assert fake.requests == ["/search/0/0/100/0/DVD9"]
+    # 只要影视类（默认）：再搜音乐、其他、体育分类，用来剔除
+    assert fake.requests == [f"/search/0/{c}/100/0/DVD9" for c in (0, 2, 3, 13)]
     record = h.watcher.store.list(["new"])[0]
     assert record.source == "rutor 直连" and record.kind == "DVD9"
     assert h.watcher.status()["rutor"] is True
@@ -364,7 +365,7 @@ def test_rutor_backfill_reads_all_pages_of_keyword_and_years(tmp_path: Path, dow
     steps = h.run(scenario)
     assert steps == 1 + (datetime.date.today().year - BACKFILL_FROM + 1)  # 关键词本身 + 每个年份
     assert fake.requests[:2] == ["/search/0/0/100/0/DVD9", "/search/1/0/100/0/DVD9"]  # 每次都翻页
-    assert len(fake.requests) == steps * 2
+    assert len(fake.requests) == steps * (2 + 3)  # 加上三个非影视分类各一页
     assert h.watcher.status()["backfill"]["added"] == 150  # 每次返回同样的 150 条，只新增一次
 
 

@@ -827,13 +827,15 @@ function renderSettings(data) {
         h("datalist", { id: "rutor-mirrors" }, h("option", { value: "https://rutor.info" }), h("option", { value: "https://rutor.is" })),
         ruTest), ruResult),
       row("搜索关键词", input("rutor.queries", v.rutor.queries.join(" ")), "多个用空格分隔"),
-      row("自动搜索", number("rutor.interval", v.rutor.interval, 0, 10080), "分钟一次，只读最新的一页；0 为只手动搜索")),
+      row("自动搜索", number("rutor.interval", v.rutor.interval, 0, 10080), "分钟一次，只读最新的一页；0 为只手动搜索"),
+      row("只要影视类", toggle("rutor.films_only", v.rutor.films_only, "去掉音乐、其他（讲座、教程）、体育分类中的结果；每个关键词多搜这三个分类"))),
     section("Jackett", "填写地址和 API Key 即启用：在“资源”页搜索 DVD 原盘。请在 Jackett 中关掉 kinozal、rutracker 等俄语站点的“Strip Cyrillic Letters”和“Add RUS to end of all titles”：开着会删掉片名和 сжатый、Лицензия 等过滤用的标记。kinozal 的标题写“DVD-9”，搜索关键词要包含 DVD-9、DVD-5。",
       row("地址", h("span", { class: "inline" }, input("jackett.url", v.jackett.url, { placeholder: "例如 http://192.168.1.10:9117，留空不启用" }), jkTest), jkResult),
       row("API Key", secret("jackett.api_key", v.jackett.api_key_set, "Jackett 页面右上角的 API Key")),
       row("站点", h("span", {}, input("jackett.indexer", v.jackett.indexer, { list: "jackett-indexers" }), indexerList), "all 为全部已配置的站点；点“测试连接”后可以从列表中选"),
       row("搜索关键词", input("jackett.queries", v.jackett.queries.join(" ")), "多个用空格分隔"),
-      row("自动搜索", number("jackett.interval", v.jackett.interval, 0, 10080), "分钟一次；0 为只手动搜索")));
+      row("自动搜索", number("jackett.interval", v.jackett.interval, 0, 10080), "分钟一次；0 为只手动搜索"),
+      row("只要影视类", toggle("jackett.films_only", v.jackett.films_only, "只搜分类 2000（电影）和 5000（电视剧、动画、纪录片），去掉音乐、培训等"))));
 
   const error = h("div", { class: "form-errors" });
   const save = h("button", { type: "submit", class: "btn amber" }, "保存");
@@ -923,6 +925,7 @@ function collectSettings(ctl, v, pathMapText) {
   put("rutor", "url", ctl["rutor.url"].value.trim(), v.rutor.url);
   put("rutor", "queries", ctl["rutor.queries"].value.split(/[\s,，]+/).filter(Boolean), v.rutor.queries);
   put("rutor", "interval", int("rutor.interval"), v.rutor.interval);
+  put("rutor", "films_only", ctl["rutor.films_only"].checked, v.rutor.films_only);
 
   const j = v.jackett;
   put("jackett", "url", ctl["jackett.url"].value.trim(), j.url);
@@ -931,6 +934,7 @@ function collectSettings(ctl, v, pathMapText) {
   put("jackett", "indexer", ctl["jackett.indexer"].value.trim() || "all", j.indexer);
   put("jackett", "queries", ctl["jackett.queries"].value.split(/[\s,，]+/).filter(Boolean), j.queries);
   put("jackett", "interval", int("jackett.interval"), j.interval);
+  put("jackett", "films_only", ctl["jackett.films_only"].checked, j.films_only);
   if (invalid) {
     toast("请填写整数");
     ctl[invalid].focus();

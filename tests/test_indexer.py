@@ -1,7 +1,7 @@
 import httpx
 import pytest
 
-from whatdvd.indexer import DVD9_MAX_BYTES, IndexerError, Jackett, classify, parse_torznab
+from whatdvd.indexer import DVD9_MAX_BYTES, FILM_CATEGORIES, IndexerError, Jackett, classify, parse_torznab
 
 # 结构同 Jackett 1.x 对 rutor 的 Torznab 输出，标题和链接为虚构
 FEED = """<?xml version="1.0" encoding="UTF-8"?>
@@ -60,6 +60,20 @@ def test_parse_torznab_errors(body: str, message: str) -> None:
 
 def _jackett(handler: httpx.MockTransport) -> Jackett:
     return Jackett("http://jackett:9117/", "KEY", indexer="rutor", transport=handler)
+
+
+def test_search_film_categories() -> None:
+    """只要影视类时带上 cat=2000,5000；不限分类时不带。"""
+    seen: list[str | None] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.params.get("cat"))
+        return httpx.Response(200, text="<rss><channel><title>x</title></channel></rss>")
+
+    transport = httpx.MockTransport(handler)
+    Jackett("http://jackett:9117", "KEY", categories=FILM_CATEGORIES, transport=transport).search("DVD9")
+    Jackett("http://jackett:9117", "KEY", transport=transport).search("DVD9")
+    assert seen == ["2000,5000", None]
 
 
 def test_search_request() -> None:

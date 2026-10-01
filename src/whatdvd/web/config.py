@@ -56,6 +56,8 @@ class JackettConfig:
     """kinozal 的标题写 "DVD-9"，只搜 "DVD9" 一条也搜不到。"""
     interval: int = 60
     """自动搜索的间隔（分钟），0 为只手动刷新。"""
+    films_only: bool = True
+    """只搜影视类：Torznab 分类 2000（电影）、5000（电视剧、动画、纪录片），去掉音乐、培训等。"""
 
 
 @dataclass(frozen=True)
@@ -65,6 +67,8 @@ class RutorConfig:
     queries: tuple[str, ...] = ("DVD9", "DVD5")
     interval: int = 60
     """自动搜索的间隔（分钟），0 为只手动刷新。自动搜索只读第 1 页（最新的 100 条）。"""
+    films_only: bool = True
+    """只要影视类：去掉 rutor 音乐、其他、体育分类中的结果。"""
 
 
 @dataclass(frozen=True)
@@ -136,9 +140,11 @@ _SCHEMA: dict[tuple[str, str], type | tuple[type, ...]] = {
     ("jackett", "indexer"): str,
     ("jackett", "queries"): list,
     ("jackett", "interval"): int,
+    ("jackett", "films_only"): bool,
     ("rutor", "url"): str,
     ("rutor", "queries"): list,
     ("rutor", "interval"): int,
+    ("rutor", "films_only"): bool,
 }
 
 
@@ -334,6 +340,7 @@ def _jackett_config(flat: dict[tuple[str, str], Any]) -> JackettConfig | None:
         indexer=flat.get(("jackett", "indexer"), "all").strip() or "all",
         queries=tuple(q.strip() for q in queries),
         interval=interval,
+        films_only=flat.get(("jackett", "films_only"), True),
     )
 
 
@@ -347,7 +354,12 @@ def _rutor_config(flat: dict[tuple[str, str], Any]) -> RutorConfig | None:
     interval = flat.get(("rutor", "interval"), 60)
     if interval != 0 and interval < 10:
         raise ConfigError("rutor.interval 不能小于 10 分钟（0 为只手动刷新）")
-    return RutorConfig(url=_http_url(url, "rutor.url"), queries=tuple(q.strip() for q in queries), interval=interval)
+    return RutorConfig(
+        url=_http_url(url, "rutor.url"),
+        queries=tuple(q.strip() for q in queries),
+        interval=interval,
+        films_only=flat.get(("rutor", "films_only"), True),
+    )
 
 
 def load_config(

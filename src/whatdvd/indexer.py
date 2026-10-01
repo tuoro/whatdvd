@@ -22,6 +22,9 @@ DVD9_MAX_BYTES = 8_543_666_176
 
 _TORZNAB = "{http://torznab.com/schemas/2015/feed}attr"
 
+FILM_CATEGORIES = ("2000", "5000")
+"""Torznab 标准分类：电影、电视（剧集、动画、纪录片）。各站在 Jackett 中都映射到这两类，音乐、培训等不在其中。"""
+
 
 class IndexerError(RuntimeError):
     pass
@@ -93,6 +96,7 @@ class Jackett:
         api_key: str,
         *,
         indexer: str = "all",
+        categories: tuple[str, ...] = (),
         timeout: float = 120.0,
         delay: float = 0.0,
         transport: httpx.BaseTransport | None = None,
@@ -104,6 +108,7 @@ class Jackett:
         self._base = url.rstrip("/")
         self._api_key = api_key
         self._indexer = indexer
+        self._categories = categories
         self._client = httpx.Client(timeout=timeout, transport=transport)
 
     def close(self) -> None:
@@ -115,7 +120,10 @@ class Jackett:
             wait = self._last_search + self._delay - time.monotonic()
             if wait > 0:
                 time.sleep(wait)
-            response = self._client.get(url, params={"apikey": self._api_key, "t": "search", "q": query})
+            params = {"apikey": self._api_key, "t": "search", "q": query}
+            if self._categories:  # Jackett 按分类分别向站点搜索，每个分类各有一份条数上限
+                params["cat"] = ",".join(self._categories)
+            response = self._client.get(url, params=params)
         except httpx.HTTPError as error:
             raise IndexerError(f"连不上 Jackett：{error or type(error).__name__}") from error
         finally:

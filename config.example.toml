@@ -71,8 +71,10 @@ template = ""           # 发布说明模板文件；留空用默认 BBCode。�
 # indexer = "all"              # Jackett 中的站点 ID，例如 rutracker、rutor、kinozal；all 为全部已配置的站点
 # queries = ["DVD9", "DVD5"]   # 每次搜索的关键词
 # interval = 60                # 自动搜索的间隔（分钟）；0 为只在界面中手动搜索
+# films_only = true            # 只搜影视类（Torznab 分类 2000 电影、5000 电视），去掉音乐、培训等
 
 # [rutor]                      # rutor 直连：直接读取 rutor 的搜索页并翻页，比通过 Jackett 拿到的多（公开站，不需要账号）
 # url = "https://rutor.info"   # 或镜像 https://rutor.is；启用后建议在 Jackett 中去掉 rutor
 # queries = ["DVD9", "DVD5"]
 # interval = 60                # 自动搜索的间隔（分钟），只读最新的一页；0 为只手动搜索
+# films_only = true            # 只要影视类：去掉 rutor 音乐、其他、体育分类中的结果

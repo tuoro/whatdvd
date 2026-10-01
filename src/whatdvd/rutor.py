@@ -18,6 +18,9 @@ import httpx
 from .indexer import IndexerError, Release
 
 SOURCE = "rutor 直连"
+
+NON_FILM = (2, 3, 13)
+"""rutor 中有 DVD 原盘的非影视分类：音乐、其他（讲座、教程）、体育和健康。"""
 PAGE_SIZE = 100
 MAX_PAGES = 20
 """rutor 每个关键词最多给出 2000 条。"""
@@ -119,24 +122,39 @@ class Rutor:
             self._last = time.monotonic()
         return response
 
-    def search(self, query: str, page: int = 0) -> tuple[int, list[Release]]:
-        """一页搜索结果：（总数，资源）。"""
-        response = self._get(f"{self.base_url}/search/{page}/0/100/0/{quote(query)}")
+    def search(self, query: str, page: int = 0, category: int = 0) -> tuple[int, list[Release]]:
+        """一页搜索结果：（总数，资源）。category 为 rutor 的分类，0 为全部。"""
+        response = self._get(f"{self.base_url}/search/{page}/{category}/100/0/{quote(query)}")
         if not response.is_success:
             raise IndexerError(f"rutor 返回 HTTP {response.status_code}")
         return parse_search(response.text, self.base_url)
 
-    def search_all(self, query: str, progress: Callable[[int, int], None] | None = None) -> list[Release]:
+    def search_all(
+        self, query: str, progress: Callable[[int, int], None] | None = None, category: int = 0
+    ) -> list[Release]:
         """翻完所有页（最多 20 页）。progress(已读页数, 总页数)。"""
-        total, releases = self.search(query, 0)
+        total, releases = self.search(query, 0, category)
         pages = min((total + PAGE_SIZE - 1) // PAGE_SIZE, MAX_PAGES)
         if progress is not None:
             progress(1, max(pages, 1))
         for page in range(1, pages):
-            releases += self.search(query, page)[1]
+            releases += self.search(query, page, category)[1]
             if progress is not None:
                 progress(page + 1, pages)
         return releases
+
+    def films(self, query: str, all_pages: bool = False) -> list[Release]:
+        """只要影视类：全部分类的结果去掉 NON_FILM 分类中的。rutor 搜索一次只能选一个分类，
+        而影视分类有十个，所以反过来搜非影视的几个分类再剔除。同样按时间倒序读同样多的页，
+        全部结果里出现的非影视资源一定也在对应分类的结果里。"""
+        def read(category: int) -> list[Release]:
+            return self.search_all(query, category=category) if all_pages else self.search(query, 0, category)[1]
+
+        releases = read(0)
+        if not releases:
+            return releases
+        other = {r.guid for category in NON_FILM for r in read(category)}
+        return [r for r in releases if r.guid not in other]
 
     def fetch(self, download_url: str) -> bytes:
         """下载种子文件（d.rutor.info，不需要登录）。"""

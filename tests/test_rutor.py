@@ -67,16 +67,22 @@ def test_parse_search_empty_and_changed_layout() -> None:
 
 
 class FakeRutor:
-    def __init__(self, total: int) -> None:
+    def __init__(self, total: int, music: frozenset[int] = frozenset()) -> None:
+        """music：属于音乐分类（2）的资源编号；其他非零分类没有结果。"""
         self.total = total
+        self.music = music
         self.requests: list[str] = []
 
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request.url.raw_path.decode())
         if request.url.host == "d.rutor.info":
             return httpx.Response(200, content=b"d4:infod4:name1:aee")
-        parts = request.url.path.split("/")  # /search/<页码>/0/100/0/<关键词>
-        number = int(parts[2])
+        parts = request.url.path.split("/")  # /search/<页码>/<分类>/100/0/<关键词>
+        number, category = int(parts[2]), int(parts[3])
+        if category:
+            ids = sorted(self.music) if category == 2 else []
+            chunk = ids[number * 100 : number * 100 + 100]
+            return httpx.Response(200, text=page(len(ids), [row(i, f"Music {i} DVD9") for i in chunk]))
         start = number * 100
         rows = [row(start + i + 1, f"Film {start + i} DVD9") for i in range(min(100, max(self.total - start, 0)))]
         return httpx.Response(200, text=page(self.total, rows))
@@ -131,3 +137,16 @@ def test_unreachable() -> None:
 
     with pytest.raises(IndexerError, match="连不上 rutor"):
         Rutor(delay=0, transport=httpx.MockTransport(fail)).search("DVD9")
+
+
+@pytest.mark.parametrize("all_pages", [False, True])
+def test_films_drops_non_film_categories(all_pages: bool) -> None:
+    """rutor 搜索一次只能选一个分类：搜音乐、其他、体育三个分类，再从全部结果中剔除。"""
+    fake = FakeRutor(total=150, music=frozenset({2, 120}))
+    client = Rutor(delay=0, transport=httpx.MockTransport(fake))
+    releases = client.films("DVD9", all_pages)
+    kept = {int(r.guid.rsplit("/", 1)[1]) for r in releases}
+    expected = set(range(1, 151 if all_pages else 101)) - {2, 120}
+    assert kept == expected
+    searched = {path.split("/")[3] for path in fake.requests}
+    assert searched == {"0", "2", "3", "13"}
