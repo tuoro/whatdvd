@@ -19,6 +19,7 @@ from ..dvd import DVD5_MAX_BYTES, ScanError
 from ..post import DEFAULT_TEMPLATE
 from ..runner import Runner, SubprocessRunner
 from ..sources import find_sources, is_iso
+from ..checks import describe_extra_files, find_extra_files
 from ..torrent import PIECE_LENGTH_RANGE, make_torrent
 from ..upload import Pixhost
 from ..workflow import HostFactory, RunOptions, RunResult, check_tools, output_title, run
@@ -301,6 +302,9 @@ def create_app(
 
     def torrent_worker(job: Job, reporter: JobReporter) -> dict[str, Any]:
         check_tools(runner, ["mktorrent"])
+        extra = find_extra_files(job.path)
+        for line in describe_extra_files(extra):
+            reporter.info(line)
         reporter.info(f"开始做种：{job.path.name}（计算哈希，DVD9 可能需要几分钟）")
         started = time.monotonic()
         output = make_torrent(
@@ -311,7 +315,12 @@ def create_app(
             piece_length=job.params["piece_length"],
         )
         reporter.info(f"种子：{output.name}（用时 {time.monotonic() - started:.0f} 秒）")
-        return {"ok": True, "torrent_file": output.name, "files": [output.name]}
+        return {
+            "ok": True,
+            "torrent_file": output.name,
+            "extra_files": [{"path": item.path.as_posix(), "reason": item.reason} for item in extra],
+            "files": [output.name],
+        }
 
     @app.post("/api/jobs", dependencies=auth, status_code=201)
     async def create_job(body: JobRequest) -> dict[str, Any]:

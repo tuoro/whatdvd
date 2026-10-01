@@ -276,6 +276,8 @@ a.card:hover { border-color: var(--line-2); background: var(--panel-2); }
 .notice.warn { background: var(--amber-soft); color: var(--amber); }
 .notice.bad { background: var(--bad-soft); color: var(--bad); }
 .notice .ico { margin-top: 2px; }
+.notice .extra-files { margin: 6px 0 0; padding-left: 18px; color: var(--ink-2); }
+.notice .extra-files code { font: 500 12.5px var(--mono); color: var(--ink); }
 .summary { display: flex; flex-wrap: wrap; gap: 6px 20px; color: var(--muted); font-weight: 600; }
 .summary b { color: var(--ink); }
 

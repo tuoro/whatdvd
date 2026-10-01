@@ -11,6 +11,7 @@ from pathlib import Path
 from .post import TemplateError, load_template
 from .runner import CommandError, Runner, SubprocessRunner
 from .resolution import ASPECT_MODES
+from .checks import describe_extra_files, find_extra_files
 from .torrent import DEFAULT_PIECE_LENGTH, PIECE_LENGTH_RANGE, make_torrent
 from .upload import PIXHOST_DOMAINS, Pixhost
 from .workflow import RunOptions, WorkflowError, check_tools, format_bytes, output_title, run
@@ -133,6 +134,8 @@ def _cmd_torrent(args: argparse.Namespace, runner: Runner) -> int:
     if not source.exists():
         print(f"路径不存在：{source}", file=sys.stderr)
         return 2
+    for line in describe_extra_files(find_extra_files(source)):
+        print(line)
     started = time.monotonic()
     try:
         output = make_torrent(runner, source, args.output, announces=args.announce, piece_length=args.piece_length)

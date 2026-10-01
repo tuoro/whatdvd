@@ -111,6 +111,7 @@ journalctl --user -u whatdvd -f                          # 查看日志
 | 剔除黑屏 | 同 Upload-Assistant：多截一张，删掉体积最小的；不超过 120 KB 的视为黑屏，在随机时间点重截，最多 3 次，超过 75 KB 即可，都不理想时保留原图。`--no-dark-filter` 或 `dark_filter = false` 关闭 |
 | 画面处理 | 除尺寸换算外不做任何处理 |
 | 做种 | `mktorrent -v -p -l 24`，announce 可不填 |
+| 做种前检查 | 列出盘目录中和上传无关的文件（PTP 2.1.3）：Thumbs.db、Desktop.ini、.DS_Store、`@eaDir` 等系统文件，图片、视频样片、种子和发布说明、没下载完的文件、快捷方式，以及 VIDEO_TS 中不属于 DVD 结构的文件。只提示，不删除，照常做种；.nfo、日志、AUDIO_TS、JACKET_P 不提示 |
 
 ## 开发
 

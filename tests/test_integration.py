@@ -174,6 +174,19 @@ def test_torrent(movie: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 
 
 @needs_mktorrent
+def test_torrent_warns_about_extra_files(movie: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    disc = shutil.copytree(movie / "Disc 2", tmp_path / "Disc 2")
+    (disc / "Desktop.ini").write_text("x")
+    (disc / "Disc.2.VTS_01_1.VOB.scr01.png").write_bytes(b"x")
+    assert cli.main(["torrent", str(disc), "-o", str(tmp_path / "out")]) == 0
+    out = capsys.readouterr().out
+    assert "注意：发现 2 个和上传无关的文件" in out
+    assert "  Desktop.ini（系统生成的文件）" in out
+    assert "  Disc.2.VTS_01_1.VOB.scr01.png（图片（截图或封面））" in out
+    assert (tmp_path / "out" / "Disc.2.torrent").is_file()
+
+
+@needs_mktorrent
 def test_torrent_without_announce(movie: Path, tmp_path: Path) -> None:
     assert cli.main(["torrent", str(movie / "Disc 2"), "-l", "20", "-o", str(tmp_path)]) == 0
     torrent = bdecode((tmp_path / "Disc.2.torrent").read_bytes())

@@ -627,6 +627,12 @@ function renderResult(job) {
       h("div", { class: "t" }, h("b", {}, result.torrent_file),
         h("span", {}, `private · 分块 ${pieceLabel(job.params.piece_length)} · ${n ? `${n} 个 Tracker` : "未填写 Tracker"}`)),
       h("a", { class: "btn amber", href: fileUrl(job, result.torrent_file), download: result.torrent_file }, icon("down"), "下载种子")));
+    const extra = result.extra_files || [];
+    if (extra.length) {
+      nodes.push(notice("warn", h("div", {},
+        h("b", {}, `发现 ${extra.length} 个和上传无关的文件，建议删除后重新做种（PTP 2.1.3）`),
+        h("ul", { class: "extra-files" }, extra.map((f) => h("li", {}, h("code", {}, f.path), `（${f.reason}）`))))));
+    }
     return nodes;
   }
 

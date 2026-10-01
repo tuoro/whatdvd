@@ -166,6 +166,18 @@ def test_torrent_job_and_download(authed: TestClient, media: Path, tmp_path: Pat
 
     jobs = authed.get("/api/jobs").json()
     assert [j["id"] for j in jobs] == [job["id"]]
+    assert job["result"]["extra_files"] == []
+
+
+def test_torrent_job_reports_extra_files(authed: TestClient, media: Path) -> None:
+    (media / "Movie A" / "Thumbs.db").write_bytes(b"x")
+    body = {"kind": "torrent", "path": str(media / "Movie A"), "announces": [], "piece_length": 24}
+    job = wait_job(authed, authed.post("/api/jobs", json=body).json()["id"])
+    assert job["status"] == "done" and job["ok"] is True  # 只提示，照样做种
+    assert job["result"]["extra_files"] == [{"path": "Thumbs.db", "reason": "系统生成的文件"}]
+    messages = [e["message"] for e in job["events"]]
+    assert "注意：发现 1 个和上传无关的文件，建议删除后再做种（PTP 2.1.3）：" in messages
+    assert (media / "Movie A" / "Thumbs.db").is_file()  # 不删除
 
 
 def test_events_stream_replays_and_ends(authed: TestClient, media: Path) -> None:
