@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import re
+import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
@@ -85,8 +86,13 @@ class Jackett:
         *,
         indexer: str = "all",
         timeout: float = 120.0,
+        delay: float = 0.0,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
+        """delay：两次搜索之间至少间隔多少秒。全面搜索会连续搜几百次，
+        kinozal 等站点对搜索频率有限制，太快会被暂时封禁。"""
+        self._delay = delay
+        self._last_search = 0.0
         self._base = url.rstrip("/")
         self._api_key = api_key
         self._indexer = indexer
@@ -98,9 +104,14 @@ class Jackett:
     def search(self, query: str) -> list[Release]:
         url = f"{self._base}/api/v2.0/indexers/{quote(self._indexer, safe='')}/results/torznab/api"
         try:
+            wait = self._last_search + self._delay - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
             response = self._client.get(url, params={"apikey": self._api_key, "t": "search", "q": query})
         except httpx.HTTPError as error:
             raise IndexerError(f"连不上 Jackett：{error or type(error).__name__}") from error
+        finally:
+            self._last_search = time.monotonic()
         if not response.is_success:
             if response.text.lstrip().startswith("<"):
                 parse_torznab(response.text)  # Torznab 的 <error> 在这里抛出

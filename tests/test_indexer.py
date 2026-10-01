@@ -224,3 +224,13 @@ def test_classify_size_and_seeders() -> None:
     assert "体积超出 DVD9 的容量" in classify("Film DVD9", DVD9_MAX_BYTES + 1).notes[0]
     assert classify("Film 2 DVD9", 2 * DVD9_MAX_BYTES).notes == []
     assert classify("Film DVD5", 4_000_000_000, seeders=0).notes == ["目前没有做种者"]
+
+
+def test_search_delay(monkeypatch: pytest.MonkeyPatch) -> None:
+    sleeps: list[float] = []
+    monkeypatch.setattr("whatdvd.indexer.time.sleep", sleeps.append)
+    jackett = Jackett("http://j", "k", delay=2.0, transport=httpx.MockTransport(lambda r: httpx.Response(200, text=FEED)))
+    jackett.search("DVD9")
+    jackett.search("DVD9 1999")
+    jackett.search("DVD9 1998")
+    assert len(sleeps) == 2 and all(0 < s <= 2.0 for s in sleeps)  # 第一次不等

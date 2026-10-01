@@ -208,6 +208,9 @@ def _serialize_run(result: RunResult) -> dict[str, Any]:
     return {"ok": result.ok, "discs": discs, "post_file": post_file, "post": post_text, "files": names}
 
 
+JACKETT_DELAY = 2.0
+"""通过 Jackett 连续搜索时的间隔（秒），避免触发 kinozal 等站点的防刷限制。"""
+
 RELEASE_GROUPS: dict[str, tuple[Status, ...]] = {
     "new": ("new",),
     "active": ("sent", "downloading", "processing"),
@@ -252,7 +255,7 @@ def create_app(
         if qb is None and c.qbit is not None:
             qb = QBittorrent(c.qbit.url, c.qbit.username, c.qbit.password)
         if jk is None and c.jackett is not None:
-            jk = Jackett(c.jackett.url, c.jackett.api_key, indexer=c.jackett.indexer)
+            jk = Jackett(c.jackett.url, c.jackett.api_key, indexer=c.jackett.indexer, delay=JACKETT_DELAY)
         if qb is None and jk is None and ru is None:
             return
         store = store or Store(c.database)
