@@ -25,6 +25,10 @@ max_jobs = 1
 # 资源候选与下载状态（SQLite），用于下面的“资源获取”
 database = "~/.local/share/whatdvd/whatdvd.db"
 
+# 设置页面保存的设置。截图、图床、做种、模板、任务数、qBittorrent、Jackett 都可以在设置页面中修改，
+# 保存在这里并覆盖本文件中的同名项；监听地址、token、roots、输出目录、数据库只能在本文件中修改。
+settings_file = "~/.local/share/whatdvd/settings.json"
+
 [screenshots]
 count = 10
 # 截图比例修正："ua"（同 Upload-Assistant，只放大不缩小，例如 NTSC 4:3 → 720x540，NTSC 16:9 → 854x480）

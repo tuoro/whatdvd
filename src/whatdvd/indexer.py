@@ -111,6 +111,21 @@ class Jackett:
             raise IndexerError(f"Jackett 返回错误：{detail or f'HTTP {response.status_code}'}")
         return parse_torznab(response.text)
 
+    def indexers(self) -> list[tuple[str, str]]:
+        """Jackett 中已配置的站点：[(ID, 名称)]。也用来测试地址和 API Key 是否正确。"""
+        url = f"{self._base}/api/v2.0/indexers/all/results/torznab/api"
+        try:
+            response = self._client.get(url, params={"apikey": self._api_key, "t": "indexers", "configured": "true"})
+        except httpx.HTTPError as error:
+            raise IndexerError(f"连不上 Jackett：{error or type(error).__name__}") from error
+        try:
+            root = ET.fromstring(response.text)
+        except ET.ParseError:
+            raise IndexerError(f"Jackett 返回 HTTP {response.status_code}，内容无法识别") from None
+        if root.tag == "error":
+            raise IndexerError(f"Jackett 返回错误：{root.get('description') or root.get('code')}")
+        return [(item.get("id") or "", item.findtext("title") or item.get("id") or "") for item in root.iter("indexer")]
+
     def fetch(self, download_url: str) -> bytes | str:
         """通过 Jackett 下载种子文件；站点只给磁力链接时 Jackett 会重定向，返回磁力链接字符串。"""
         try:

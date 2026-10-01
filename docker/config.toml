@@ -10,6 +10,8 @@ output_dir = "/output"
 temp_dir = "/output/.tmp"
 max_jobs = 1
 database = "/output/.whatdvd/whatdvd.db"
+# 设置页面保存的设置，覆盖本文件中的同名项
+settings_file = "/output/.whatdvd/settings.json"
 
 [screenshots]
 count = 10

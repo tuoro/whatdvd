@@ -344,3 +344,148 @@ def test_releases_flow(tmp_path: Path, media: Path) -> None:
         assert client.post("/api/releases/missing/download").status_code == 404
         assert client.post(f"/api/releases/{second}/reprocess").status_code == 409
     assert TestClient(app).get("/api/releases").status_code == 401  # 需要登录
+
+
+# ---------- 设置页面 ----------
+
+
+@pytest.fixture
+def settings_client(tmp_path: Path, media: Path) -> Iterator[tuple[TestClient, Path]]:
+    from whatdvd.web.config import load_config
+
+    config_file = tmp_path / "config.toml"
+    settings_file = tmp_path / "settings.json"
+    config_file.write_text(
+        f'token = "{TOKEN}"\nroots = ["{media}"]\noutput_dir = "{tmp_path}/out"\n'
+        f'database = "{tmp_path}/state.db"\nsettings_file = "{settings_file}"\n\n[screenshots]\ncount = 8\n',
+        encoding="utf-8",
+    )
+    app = create_app(load_config(config_file), runner=FakeRunner(fake_mktorrent), background=False)
+    with TestClient(app, headers={"Authorization": f"Bearer {TOKEN}"}) as client:
+        yield client, settings_file
+
+
+def test_settings_get(settings_client: tuple[TestClient, Path]) -> None:
+    client, settings_file = settings_client
+    data = client.get("/api/settings").json()
+    assert data["values"]["screenshots"]["count"] == 8
+    assert data["values"]["qbittorrent"]["url"] == "" and data["values"]["qbittorrent"]["password_set"] is False
+    assert data["overridden"] == []
+    assert data["fixed"]["settings_file"] == str(settings_file)
+    assert data["options"]["aspect_modes"] == ["ua", "minfo", "jietu"]
+
+
+def test_settings_save_applies_immediately_and_persists(settings_client: tuple[TestClient, Path]) -> None:
+    import json
+    import stat
+
+    client, settings_file = settings_client
+    body = {
+        "screenshots": {"count": 5, "dark_filter": False},
+        "max_jobs": 2,
+        "post": {"template_text": "$name\n$screenshots"},
+        "qbittorrent": {"url": "http://qb:8080", "username": "admin", "password": "secret"},
+        "jackett": {"url": "http://jackett:9117", "api_key": "key", "interval": 0},
+    }
+    data = client.put("/api/settings", json=body).json()
+    values = data["values"]
+    assert values["screenshots"] == {"count": 5, "aspect": "ua", "dark_filter": False}
+    assert values["qbittorrent"]["password_set"] and values["jackett"]["api_key_set"]
+    assert "secret" not in json.dumps(data) and '"key"' not in json.dumps(data)
+    assert "screenshots.count" in data["overridden"] and "qbittorrent.password" in data["overridden"]
+
+    config = client.get("/api/config").json()  # 立即生效
+    assert config["screenshot_count"] == 5 and config["max_jobs"] == 2 and config["custom_template"]
+    assert config["qbit"]["url"] == "http://qb:8080"
+    assert client.get("/api/releases").status_code == 200  # 资源功能随之启用
+
+    saved = json.loads(settings_file.read_text(encoding="utf-8"))
+    assert saved["screenshots"] == {"count": 5, "dark_filter": False}
+    assert saved["qbittorrent"]["password"] == "secret"
+    assert stat.S_IMODE(settings_file.stat().st_mode) == 0o600
+
+    # 密码为 null 保持不变；其他项为 null 恢复为配置文件的值
+    data = client.put("/api/settings", json={"qbittorrent": {"password": None}, "screenshots": {"count": None}}).json()
+    assert data["values"]["qbittorrent"]["password_set"] and data["values"]["screenshots"]["count"] == 8
+    assert json.loads(settings_file.read_text(encoding="utf-8"))["qbittorrent"]["password"] == "secret"
+
+    # 关掉 qB 和 Jackett
+    client.put("/api/settings", json={"qbittorrent": {"url": ""}, "jackett": {"url": ""}})
+    assert client.get("/api/releases").status_code == 404
+
+
+@pytest.mark.parametrize(
+    ("body", "message"),
+    [
+        ({"screenshots": {"count": 0}}, "正整数"),
+        ({"screenshots": {"count": "5"}}, "类型不对"),
+        ({"screenshots": {"aspect": "bad"}}, "screenshots.aspect"),
+        ({"post": {"template_text": "$name $oops"}}, "模板"),
+        ({"max_jobs": 99}, "不能超过"),
+        ({"qbittorrent": {"url": "qb:8080"}}, "http://"),
+        ({"jackett": {"url": "http://j"}}, "api_key"),
+        ({"roots": ["/"]}, "不能在设置页面中修改"),
+        ({"token": "x"}, "不能在设置页面中修改"),
+        ({"database": "/tmp/x.db"}, "不能在设置页面中修改"),
+        ({"screenshots": 5}, "应该是一个表"),
+        ({"screenshots": {"nope": 1}}, "不能在设置页面中修改"),
+    ],
+)
+def test_settings_invalid_changes_are_rejected(settings_client: tuple[TestClient, Path], body: dict[str, Any], message: str) -> None:
+    client, settings_file = settings_client
+    response = client.put("/api/settings", json=body)
+    assert response.status_code == 400 and message in response.json()["detail"], response.json()
+    assert not settings_file.exists()  # 校验不通过不写入
+    assert client.get("/api/config").json()["screenshot_count"] == 8
+
+
+def test_settings_reset(settings_client: tuple[TestClient, Path]) -> None:
+    import json
+
+    client, settings_file = settings_client
+    client.put("/api/settings", json={"screenshots": {"count": 3}})
+    data = client.delete("/api/settings").json()
+    assert data["overridden"] == [] and data["values"]["screenshots"]["count"] == 8
+    assert json.loads(settings_file.read_text(encoding="utf-8")) == {}
+
+
+def test_settings_connection_tests_report_errors(settings_client: tuple[TestClient, Path]) -> None:
+    client, _ = settings_client
+    response = client.post("/api/settings/test/qbittorrent", json={"url": "http://127.0.0.1:1", "username": "a"})
+    assert response.status_code == 400 and "连不上 qBittorrent" in response.json()["detail"]
+    response = client.post("/api/settings/test/jackett", json={"url": "http://127.0.0.1:1", "api_key": "k"})
+    assert response.status_code == 400 and "连不上 Jackett" in response.json()["detail"]
+
+
+def test_settings_requires_login(settings_client: tuple[TestClient, Path]) -> None:
+    client, _ = settings_client
+    client.headers.pop("Authorization")
+    assert client.get("/api/settings").status_code == 401
+    assert client.put("/api/settings", json={"max_jobs": 2}).status_code == 401
+
+
+def test_job_limit_can_change_while_running() -> None:
+    from whatdvd.web.jobs import JobManager
+
+    async def scenario() -> list[str]:
+        manager = JobManager(1)
+        release = threading.Event()
+        started: list[str] = []
+
+        def worker(job: Job, reporter: Any) -> dict[str, Any]:
+            started.append(job.path.name)
+            release.wait(5)
+            return {"ok": True}
+
+        for name in ("a", "b"):
+            manager.submit(Job("run", Path(name), {}, Path("/tmp")), worker)
+        await asyncio.sleep(0.2)
+        assert started == ["a"]  # 只能同时运行 1 个
+        await manager.set_limit(2)
+        await asyncio.sleep(0.2)
+        assert sorted(started) == ["a", "b"]  # 调大后排队的任务立即开始
+        release.set()
+        await manager.wait_all()
+        return started
+
+    asyncio.run(scenario())

@@ -56,11 +56,12 @@ whatdvd token                                           # 查看登录 token 和
 - 需要 token 登录。第一次启动时自动生成并保存在 `~/.local/share/whatdvd/token`，终端会打印带 token 的登录链接；之后重启不变，随时运行 `whatdvd token` 查看。也可以在配置文件的 `token` 或环境变量 `WHATDVD_TOKEN` 中自己指定。
 - 只能浏览和处理 `roots` 中的目录；指向这些目录以外的符号链接不会显示，也无法访问。
 - 界面中可以选择 DVD 文件夹、ISO 或包含多张盘的目录，生成截图和 MediaInfo（上传图床并生成发布说明），或者做种；日志实时显示，发布说明和 MediaInfo 可一键复制，种子可直接下载。
+- **设置页面**（右上角齿轮）：截图、图床、做种、发布说明模板、同时运行的任务数、ISO 临时目录、qBittorrent 和 Jackett 都可以在界面中修改，保存后立即生效，不用重启；qBittorrent 和 Jackett 可以先“测试连接”，Jackett 测试成功后列出已配置的站点供选择。修改保存在 `settings_file`（默认 `~/.local/share/whatdvd/settings.json`，权限 600），覆盖配置文件中的同名项，可以一键恢复为配置文件。监听地址、token、`roots`、输出目录、数据库只能在配置文件中修改：改了需要重启，或者关系到能访问哪些文件。
 - 任务排队执行，默认同一时间只运行一个（`max_jobs`）。任务记录保存在内存中，重启服务后清空，输出文件保留在 `output_dir`。
 
 ## 资源获取（Jackett + qBittorrent，可选）
 
-通过 [Jackett](https://github.com/Jackett/Jackett) 搜索 rutracker、rutor、kinozal 等站点上的 DVD 原盘，在界面中挑选后推送到 qBittorrent，下载完成后自动走完整流程（截图、MediaInfo、上传图床、发布说明）。whatdvd 只对接两者的 API，不负责部署。
+通过 [Jackett](https://github.com/Jackett/Jackett) 搜索 rutracker、rutor、kinozal 等站点上的 DVD 原盘，在界面中挑选后推送到 qBittorrent，下载完成后自动走完整流程（截图、MediaInfo、上传图床、发布说明）。whatdvd 只对接两者的 API，不负责部署。可以在设置页面中填写，也可以写在配置文件里：
 
 ```toml
 [qbittorrent]

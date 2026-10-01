@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import secrets
 import tomllib
@@ -10,7 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..post import DEFAULT_TEMPLATE, TemplateError, load_template
+from ..post import DEFAULT_TEMPLATE, PostDisc, TemplateError, load_template, render_post
 from ..resolution import ASPECT_MODES
 from ..torrent import DEFAULT_PIECE_LENGTH, PIECE_LENGTH_RANGE
 from ..upload import PIXHOST_DOMAINS
@@ -20,6 +21,7 @@ DEFAULT_TOKEN_FILE = Path("~/.local/share/whatdvd/token")
 CONFIG_ENV = "WHATDVD_CONFIG"
 DEFAULT_OUTPUT_DIR = Path("~/.local/share/whatdvd/output")
 DEFAULT_DATABASE = Path("~/.local/share/whatdvd/whatdvd.db")
+DEFAULT_SETTINGS_FILE = Path("~/.local/share/whatdvd/settings.json")
 QB_PASSWORD_ENV = "WHATDVD_QB_PASSWORD"
 JACKETT_KEY_ENV = "WHATDVD_JACKETT_API_KEY"
 DEFAULT_PORT = 26873
@@ -80,6 +82,14 @@ class ServerConfig:
     """资源候选与下载状态（SQLite）。"""
     qbit: QbitConfig | None = None
     jackett: JackettConfig | None = None
+    config_file: Path | None = None
+    """读取的配置文件；没有时为 None。"""
+    settings_file: Path = DEFAULT_SETTINGS_FILE
+    """在设置页面中保存的设置（覆盖配置文件中的同名项）。"""
+    overridden: frozenset[str] = frozenset()
+    """被设置页面覆盖的项，例如 "screenshots.count"。"""
+    template_file: str | None = None
+    template_text: str | None = None
 
 
 # 允许的键与类型：(表名, 键名) → 类型。表名为空表示顶层。
@@ -100,6 +110,8 @@ _SCHEMA: dict[tuple[str, str], type | tuple[type, ...]] = {
     ("torrent", "announces"): list,
     ("torrent", "piece_length"): int,
     ("post", "template"): str,
+    ("post", "template_text"): str,
+    ("", "settings_file"): str,
     ("", "database"): str,
     ("qbittorrent", "url"): str,
     ("qbittorrent", "username"): str,
@@ -116,6 +128,24 @@ _SCHEMA: dict[tuple[str, str], type | tuple[type, ...]] = {
 }
 
 
+# 可以在设置页面中修改的项。监听地址、token、roots、输出目录、数据库等只能在配置文件中设置：
+# 改了需要重启，或者关系到能访问哪些文件。
+EDITABLE: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("", "max_jobs"),
+        ("", "temp_dir"),
+        *((table, key) for table, key in _SCHEMA if table in ("screenshots", "pixhost", "torrent", "post")),
+        *((table, key) for table, key in _SCHEMA if table in ("qbittorrent", "jackett")),
+    }
+)
+SECRETS: frozenset[tuple[str, str]] = frozenset({("qbittorrent", "password"), ("jackett", "api_key")})
+
+
+def key_name(key: tuple[str, str]) -> str:
+    table, name = key
+    return f"{table}.{name}" if table else name
+
+
 def _flatten(data: dict[str, Any]) -> dict[tuple[str, str], Any]:
     tables = {table for table, _ in _SCHEMA if table}
     flat: dict[tuple[str, str], Any] = {}
@@ -126,14 +156,18 @@ def _flatten(data: dict[str, Any]) -> dict[tuple[str, str], Any]:
             flat.update({(key, sub): sub_value for sub, sub_value in value.items()})
         else:
             flat[("", key)] = value
-    for (table, key), value in flat.items():
-        name = f"{table}.{key}" if table else key
-        expected = _SCHEMA.get((table, key))
+    _check_types(flat)
+    return flat
+
+
+def _check_types(flat: dict[tuple[str, str], Any]) -> None:
+    for key, value in flat.items():
+        name = key_name(key)
+        expected = _SCHEMA.get(key)
         if expected is None:
             raise ConfigError(f"未知的配置项：{name}")
         if not isinstance(value, expected) or (expected is int and isinstance(value, bool)):
             raise ConfigError(f"配置项 {name} 的类型不对")
-    return flat
 
 
 def _expand(text: str) -> Path:
@@ -202,6 +236,40 @@ def _read(path: Path | None) -> dict[tuple[str, str], Any]:
         raise ConfigError(f"配置文件格式有误：{error}") from None
 
 
+def read_settings(path: Path) -> dict[tuple[str, str], Any]:
+    """设置页面保存的设置（JSON，结构同配置文件的表）。文件不存在时为空。"""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return {}
+    except (OSError, ValueError) as error:
+        raise ConfigError(f"无法读取设置文件 {path}：{error}") from None
+    if not isinstance(data, dict):
+        raise ConfigError(f"设置文件格式有误：{path}")
+    flat = _flatten(data)
+    for key in flat:
+        if key not in EDITABLE:
+            raise ConfigError(f"设置文件中不能包含 {key_name(key)}，它只能在配置文件中设置")
+    return flat
+
+
+def write_settings(path: Path, flat: dict[tuple[str, str], Any]) -> None:
+    """原子写入，权限 600（含 qB 密码和 Jackett API Key）。"""
+    tables: dict[str, Any] = {}
+    for (table, key), value in sorted(flat.items()):
+        if table:
+            tables.setdefault(table, {})[key] = value
+        else:
+            tables[key] = value
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp = path.with_name(f".{path.name}.tmp")
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        json.dump(tables, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+    temp.replace(path)
+
+
 def _http_url(value: str, name: str) -> str:
     if not value.startswith(("http://", "https://")):
         raise ConfigError(f"{name} 必须以 http:// 或 https:// 开头")
@@ -261,8 +329,15 @@ def load_config(
     host: str | None = None,
     port: int | None = None,
     roots: Sequence[Path] = (),
+    settings: dict[tuple[str, str], Any] | None = None,
 ) -> ServerConfig:
+    """settings 不为 None 时代替设置文件的内容（设置页面保存前校验用）。"""
+    file = config_path(path)
     flat = _read(path)
+    settings_file = _expand(flat.get(("", "settings_file"), str(DEFAULT_SETTINGS_FILE))).absolute()
+    overrides = read_settings(settings_file) if settings is None else settings
+    _check_types(overrides)
+    flat = {**flat, **overrides}
 
     raw_roots = [Path(p) for p in roots] or [_expand(str(p)) for p in flat.get(("", "roots"), [])]
     if not raw_roots:
@@ -299,14 +374,28 @@ def load_config(
     if not all(isinstance(a, str) and a.strip() for a in announces):
         raise ConfigError("torrent.announces 必须是非空字符串列表")
 
-    template_path = flat.get(("post", "template"))
+    template_path = flat.get(("post", "template")) or None
+    template_text = flat.get(("post", "template_text")) or None
     try:
-        template = load_template(_expand(template_path) if template_path else None)
+        if template_text:
+            render_post([PostDisc(name="", mediainfo="", image_urls=[])], template_text)
+            template = template_text
+        else:
+            template = load_template(_expand(template_path) if template_path else None)
     except (OSError, TemplateError) as error:
         raise ConfigError(f"发布说明模板有误：{error}") from None
 
+    max_jobs_limit = 8
+    if max_jobs > max_jobs_limit:
+        raise ConfigError(f"max_jobs 不能超过 {max_jobs_limit}")
+
     temp_dir = flat.get(("", "temp_dir"))
     return ServerConfig(
+        config_file=file,
+        settings_file=settings_file,
+        overridden=frozenset(key_name(key) for key in overrides),
+        template_file=template_path,
+        template_text=template_text,
         database=_expand(flat.get(("", "database"), str(DEFAULT_DATABASE))).absolute(),
         qbit=_qbit_config(flat),
         jackett=_jackett_config(flat),

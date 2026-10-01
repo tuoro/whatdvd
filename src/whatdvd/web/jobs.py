@@ -95,7 +95,9 @@ Worker = Callable[[Job, JobReporter], dict[str, Any]]
 
 class JobManager:
     def __init__(self, max_jobs: int = 1, keep: int = 50) -> None:
-        self._semaphore = asyncio.Semaphore(max_jobs)
+        self._limit = max_jobs
+        self._running = 0
+        self._slots = asyncio.Condition()
         self._jobs: OrderedDict[str, Job] = OrderedDict()
         self._keep = keep
         self._tasks: set[asyncio.Task[None]] = set()
@@ -107,6 +109,12 @@ class JobManager:
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
         return job
+
+    async def set_limit(self, max_jobs: int) -> None:
+        """修改同时运行的任务数；调大时排队的任务立即开始，调小时正在运行的任务不受影响。"""
+        async with self._slots:
+            self._limit = max_jobs
+            self._slots.notify_all()
 
     def get(self, job_id: str) -> Job | None:
         return self._jobs.get(job_id)
@@ -125,25 +133,35 @@ class JobManager:
             del self._jobs[finished.pop(0)]
 
     async def _run(self, job: Job, worker: Worker) -> None:
-        async with self._semaphore:
-            job.status = "running"
-            job.touch()
-            reporter = JobReporter(job, asyncio.get_running_loop())
-            try:
-                result = await asyncio.to_thread(worker, job, reporter)
-            except Exception as error:  # noqa: BLE001 - 任何异常都记为任务失败并显示给用户
-                await asyncio.sleep(0)  # 让线程里排队的日志先写入
-                job.error = str(error) or type(error).__name__
-                job.add_event("error", job.error)
-                job.status = "failed"
-            else:
-                await asyncio.sleep(0)
-                job.files = frozenset(result.pop("files", []))
-                job.result = result
-                job.status = "done"
-                job.progress = 1.0
-            job.finished_at = time.time()
-            job.touch()
+        async with self._slots:
+            await self._slots.wait_for(lambda: self._running < self._limit)
+            self._running += 1
+        try:
+            await self._execute(job, worker)
+        finally:
+            async with self._slots:
+                self._running -= 1
+                self._slots.notify_all()
+
+    async def _execute(self, job: Job, worker: Worker) -> None:
+        job.status = "running"
+        job.touch()
+        reporter = JobReporter(job, asyncio.get_running_loop())
+        try:
+            result = await asyncio.to_thread(worker, job, reporter)
+        except Exception as error:  # noqa: BLE001 - 任何异常都记为任务失败并显示给用户
+            await asyncio.sleep(0)  # 让线程里排队的日志先写入
+            job.error = str(error) or type(error).__name__
+            job.add_event("error", job.error)
+            job.status = "failed"
+        else:
+            await asyncio.sleep(0)
+            job.files = frozenset(result.pop("files", []))
+            job.result = result
+            job.status = "done"
+            job.progress = 1.0
+        job.finished_at = time.time()
+        job.touch()
 
 
 async def stream_events(job: Job, start: int = 0, keepalive: float = 15.0) -> AsyncIterator[str]:

@@ -717,33 +717,238 @@ function mediainfoPanel(job, disc) {
 
 // ---------- 页面：设置、空白 ----------
 
-function showSettings() {
+// ---------- 设置 ----------
+
+const PATH_MAP_HINT = "每行一条：qB 中的路径 = whatdvd 中的路径";
+
+async function showSettings() {
   state.selected = null;
   if (state.listing) renderListing();
-  const c = state.config;
-  const row = (term, value) => [h("dt", {}, term), h("dd", {}, value)];
+  const data = await api("/api/settings");
+  if (!state.route || state.route.name !== "settings") return;
+  renderSettings(data);
+}
+
+function renderSettings(data) {
+  const v = data.values;
+  const o = data.options;
+  const f = data.fixed;
+  const ctl = {};   // 表单控件，按 "表.键" 存放
+
+  const row = (label, control, hint) => h("label", { class: "form-row" },
+    h("span", { class: "form-label" }, label),
+    h("span", { class: "form-control" }, control, hint ? h("small", {}, hint) : null));
+  const input = (key, value, attrs = {}) => (ctl[key] = h("input", { type: "text", value, spellcheck: "false", ...attrs }));
+  const number = (key, value, min, max) => input(key, String(value), { type: "number", min, max });
+  const select = (key, value, options) => (ctl[key] = h("select", {},
+    options.map(([val, label]) => h("option", { value: val, selected: String(val) === String(value) }, label))));
+  const toggle = (key, checked, label) => {
+    ctl[key] = h("input", { type: "checkbox", checked });
+    return h("span", { class: "switch" }, ctl[key], h("span", { class: "track" }), label);
+  };
+  const area = (key, value, rows, placeholder) => (ctl[key] = h("textarea", { rows, spellcheck: "false", placeholder }, value));
+  const secret = (key, isSet, placeholder) => {
+    ctl[key] = h("input", { type: "password", autocomplete: "new-password", placeholder: isSet ? "已设置，留空不修改" : placeholder });
+    if (!isSet) return ctl[key];
+    ctl[`${key}.clear`] = h("input", { type: "checkbox" });
+    return h("span", { class: "inline" }, ctl[key], h("label", { class: "check" }, ctl[`${key}.clear`], "清除"));
+  };
+  const section = (title, desc, ...rows) => h("section", { class: "form-section" },
+    h("h2", {}, title), desc ? h("p", { class: "form-desc" }, desc) : null, ...rows);
+
+  const pieces = [];
+  for (let n = o.piece_length_range[0]; n <= o.piece_length_range[1]; n += 1) pieces.push([n, `${pieceLabel(n)}${n === 24 ? "（默认）" : ""}`]);
+
+  // qB 测试
+  const qbResult = h("small", { class: "test-result" });
+  const qbTest = h("button", { type: "button", class: "btn small glass" }, "测试连接");
+  qbTest.addEventListener("click", () => testConnection(qbTest, qbResult, "/api/settings/test/qbittorrent", {
+    url: ctl["qbittorrent.url"].value.trim(),
+    username: ctl["qbittorrent.username"].value,
+    password: secretValue(ctl, "qbittorrent.password"),
+  }, (r) => `连接成功，qBittorrent ${r.version}`));
+
+  // Jackett 测试：成功后把已配置的站点填进下拉框
+  const jkResult = h("small", { class: "test-result" });
+  const jkTest = h("button", { type: "button", class: "btn small glass" }, "测试连接");
+  const indexerList = h("datalist", { id: "jackett-indexers" }, h("option", { value: "all" }, "全部已配置的站点"));
+  jkTest.addEventListener("click", () => testConnection(jkTest, jkResult, "/api/settings/test/jackett", {
+    url: ctl["jackett.url"].value.trim(),
+    api_key: secretValue(ctl, "jackett.api_key"),
+  }, (r) => {
+    indexerList.replaceChildren(h("option", { value: "all" }, "全部已配置的站点"),
+      ...r.indexers.map((i) => h("option", { value: i.id }, i.name)));
+    return r.indexers.length ? `连接成功，已配置的站点：${r.indexers.map((i) => `${i.name}（${i.id}）`).join("、")}` : "连接成功，但 Jackett 中还没有配置站点";
+  }));
+
+  const pathMap = Object.entries(v.qbittorrent.path_map).map(([a, b]) => `${a} = ${b}`).join("\n");
+  const form = h("form", { class: "settings-form", novalidate: true },
+    section("截图", null,
+      row("每盘张数", number("screenshots.count", v.screenshots.count, 1, 100)),
+      row("比例修正", select("screenshots.aspect", v.screenshots.aspect, o.aspect_modes.map((m) => [m, ASPECT_LABELS[m] || m]))),
+      row("剔除黑屏", toggle("screenshots.dark_filter", v.screenshots.dark_filter, "多截一张删掉最小的，小于 120 KB 的换时间点重截"))),
+    section("图床", null,
+      row("Pixhost 域名", select("pixhost.domain", v.pixhost.domain, o.pixhost_domains.map((d) => [d, d]))),
+      row("代理", input("pixhost.proxy", v.pixhost.proxy, { placeholder: "例如 http://127.0.0.1:7890，留空不用" }))),
+    section("做种", null,
+      row("默认 Tracker", area("torrent.announces", v.torrent.announces.join("\n"), 3, "每行一个，可留空"), "做种表单里预填"),
+      row("默认分块", select("torrent.piece_length", v.torrent.piece_length, pieces))),
+    section("发布说明模板", "每张盘套用一次。可用变量：$name（盘名）、$mediainfo、$screenshots（每张截图一行 [img]直链[/img]）。留空使用默认 BBCode 模板。",
+      row("模板", area("post.template_text", v.post.template_text, 8, data.default_template),
+        v.post.template ? `配置文件中指定了模板文件 ${v.post.template}；这里填写后优先使用这里的内容。` : null)),
+    section("任务", null,
+      row("同时运行", number("max_jobs", v.max_jobs, 1, 8), "个任务；修改后立即生效"),
+      row("ISO 临时目录", input("temp_dir", v.temp_dir, { placeholder: "留空使用系统临时目录" }), "ISO 解包会写入约 1 GB 的 VOB")),
+    section("qBittorrent", "填写地址即启用：下载“资源”页中选中的种子，并自动处理这个分类下下载完成的种子。只对接 Web API，不负责部署。",
+      row("地址", h("span", { class: "inline" }, input("qbittorrent.url", v.qbittorrent.url, { placeholder: "例如 http://192.168.1.10:8080，留空不启用" }), qbTest), qbResult),
+      row("用户名", input("qbittorrent.username", v.qbittorrent.username, { autocomplete: "off" })),
+      row("密码", secret("qbittorrent.password", v.qbittorrent.password_set, "")),
+      row("分类", input("qbittorrent.category", v.qbittorrent.category)),
+      row("保存路径", input("qbittorrent.save_path", v.qbittorrent.save_path, { placeholder: "qB 中的路径；留空用分类或 qB 的默认路径" })),
+      row("路径映射", area("qbittorrent.path_map", pathMap, 2, "/downloads = /media/qb"),
+        `${PATH_MAP_HINT}。两边看到的路径一样时留空。映射后的目录必须在允许浏览的目录内。`),
+      row("检查间隔", number("qbittorrent.interval", v.qbittorrent.interval, 10, 3600), "秒")),
+    section("Jackett", "填写地址和 API Key 即启用：在“资源”页搜索 DVD 原盘。",
+      row("地址", h("span", { class: "inline" }, input("jackett.url", v.jackett.url, { placeholder: "例如 http://192.168.1.10:9117，留空不启用" }), jkTest), jkResult),
+      row("API Key", secret("jackett.api_key", v.jackett.api_key_set, "Jackett 页面右上角的 API Key")),
+      row("站点", h("span", {}, input("jackett.indexer", v.jackett.indexer, { list: "jackett-indexers" }), indexerList), "all 为全部已配置的站点；点“测试连接”后可以从列表中选"),
+      row("搜索关键词", input("jackett.queries", v.jackett.queries.join(" ")), "多个用空格分隔"),
+      row("自动搜索", number("jackett.interval", v.jackett.interval, 0, 10080), "分钟一次；0 为只手动搜索")));
+
+  const error = h("div", { class: "form-errors" });
+  const save = h("button", { type: "submit", class: "btn amber" }, "保存");
+  const reset = h("button", { type: "button", class: "btn glass" }, "全部恢复为配置文件");
+  reset.hidden = data.overridden.length === 0;
+  const status = h("span", { class: "save-status" },
+    data.overridden.length ? `设置页面修改过 ${data.overridden.length} 项` : "所有项都来自配置文件或默认值");
+  form.append(h("div", { class: "save-bar" }, save, reset, status));
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const changes = collectSettings(ctl, v, pathMap);
+    if (changes === null) return;
+    if (!Object.keys(changes).length) { toast("没有改动"); return; }
+    await saveSettings(save, error, () => api("/api/settings", { method: "PUT", json: changes }), "已保存，立即生效");
+  });
+  reset.addEventListener("click", async () => {
+    if (!confirm("去掉设置页面保存的所有修改，恢复为配置文件和默认值？")) return;
+    await saveSettings(reset, error, () => api("/api/settings", { method: "DELETE" }), "已恢复为配置文件");
+  });
+
+  const fixedRow = (term, value) => [h("dt", {}, term), h("dd", {}, value)];
+  const fixed = h("section", { class: "form-section" }, h("h2", {}, "服务"),
+    h("p", { class: "form-desc" }, "以下几项只能在配置文件中修改，改后重启服务生效：它们关系到监听地址、登录和能访问哪些文件。"),
+    h("dl", { class: "settings" },
+      fixedRow("监听地址", f.listen),
+      fixedRow("允许浏览的目录", f.roots.join("\n")),
+      fixedRow("输出目录", f.output_dir),
+      fixedRow("登录 token", f.token),
+      fixedRow("数据库", f.database),
+      fixedRow("配置文件", f.config_file || "无（全部使用默认值）"),
+      fixedRow("设置页面的修改保存在", f.settings_file)));
+
   setMain(
-    hero({ eyebrow: "设置", title: "当前配置", compact: true, meta: [h("span", {}, "在配置文件中修改，重启服务后生效")] }),
-    h("div", { class: "content" }, h("dl", { class: "settings" },
-      row("监听地址", c.listen),
-      row("允许浏览的目录", c.roots.join("\n")),
-      row("输出目录", c.output_dir),
-      row("ISO 临时目录", c.temp_dir || "系统临时目录"),
-      row("同时运行的任务", String(c.max_jobs)),
-      row("每盘截图", `${c.screenshot_count} 张（在 VOB 时长的 5%–90% 均匀取点，主片按 IFO 时长选）`),
-      row("比例修正", ASPECT_LABELS[c.aspect] || c.aspect),
-      row("剔除黑屏", c.dark_filter ? "开：多截一张删掉最小的，小于 120 KB 的换时间点重截" : "关"),
-      row("图床", `Pixhost（${c.pixhost_domain}）${c.proxy ? "，经代理" : ""}`),
-      row("默认 Tracker", c.announces.join("\n") || "无"),
-      row("默认分块", `${pieceLabel(c.piece_length)}（2^${c.piece_length}）`),
-      row("发布说明模板", c.custom_template ? "自定义模板" : "默认 BBCode"),
-      row("Jackett", c.jackett
-        ? `${c.jackett.url}，站点 ${c.jackett.indexer === "all" ? "全部" : c.jackett.indexer}，搜索 ${c.jackett.queries.join("、")}，${c.jackett.interval ? `每 ${c.jackett.interval} 分钟` : "只手动刷新"}`
-        : "未配置"),
-      row("qBittorrent", c.qbit
-        ? `${c.qbit.url}，分类 ${c.qbit.category}${c.qbit.path_map.length ? `\n路径映射：${c.qbit.path_map.map(([a, b]) => `${a} → ${b}`).join("，")}` : ""}`
-        : "未配置"),
-      row("配置文件", "~/.config/whatdvd/config.toml，或启动时用 -c 指定"))));
+    hero({ eyebrow: "whatdvd", title: "设置", compact: true, meta: [h("span", {}, "保存后立即生效，不用重启")] }),
+    h("div", { class: "content" }, error, form, fixed));
+}
+
+function secretValue(ctl, key) {
+  if (ctl[`${key}.clear`] && ctl[`${key}.clear`].checked) return "";
+  return ctl[key].value === "" ? null : ctl[key].value;
+}
+
+function collectSettings(ctl, v, pathMapText) {
+  const changes = {};
+  const put = (table, key, value, old) => {
+    if (JSON.stringify(value) === JSON.stringify(old)) return;
+    if (table) (changes[table] = changes[table] || {})[key] = value;
+    else changes[key] = value;
+  };
+  let invalid = null;
+  const int = (key) => {
+    const value = Number(ctl[key].value);
+    if (ctl[key].value.trim() === "" || !Number.isInteger(value)) invalid = invalid || key;
+    return value;
+  };
+  const lines = (key) => ctl[key].value.split("\n").map((x) => x.trim()).filter(Boolean);
+
+  put("screenshots", "count", int("screenshots.count"), v.screenshots.count);
+  put("screenshots", "aspect", ctl["screenshots.aspect"].value, v.screenshots.aspect);
+  put("screenshots", "dark_filter", ctl["screenshots.dark_filter"].checked, v.screenshots.dark_filter);
+  put("pixhost", "domain", ctl["pixhost.domain"].value, v.pixhost.domain);
+  put("pixhost", "proxy", ctl["pixhost.proxy"].value.trim(), v.pixhost.proxy);
+  put("torrent", "announces", lines("torrent.announces"), v.torrent.announces);
+  put("torrent", "piece_length", int("torrent.piece_length"), v.torrent.piece_length);
+  put("post", "template_text", ctl["post.template_text"].value.trim() ? ctl["post.template_text"].value : "", v.post.template_text);
+  put("", "max_jobs", int("max_jobs"), v.max_jobs);
+  put("", "temp_dir", ctl.temp_dir.value.trim(), v.temp_dir);
+
+  const q = v.qbittorrent;
+  put("qbittorrent", "url", ctl["qbittorrent.url"].value.trim(), q.url);
+  put("qbittorrent", "username", ctl["qbittorrent.username"].value, q.username);
+  const password = secretValue(ctl, "qbittorrent.password");
+  if (password !== null) put("qbittorrent", "password", password, undefined);
+  put("qbittorrent", "category", ctl["qbittorrent.category"].value.trim(), q.category);
+  put("qbittorrent", "save_path", ctl["qbittorrent.save_path"].value.trim(), q.save_path);
+  if (ctl["qbittorrent.path_map"].value.trim() !== pathMapText.trim()) {
+    const map = {};
+    for (const line of lines("qbittorrent.path_map")) {
+      const [remote, local] = line.split("=").map((x) => (x || "").trim());
+      if (!remote || !local) { toast(`路径映射格式不对：${line}。${PATH_MAP_HINT}`); return null; }
+      map[remote] = local;
+    }
+    put("qbittorrent", "path_map", map, undefined);
+  }
+  put("qbittorrent", "interval", int("qbittorrent.interval"), q.interval);
+
+  const j = v.jackett;
+  put("jackett", "url", ctl["jackett.url"].value.trim(), j.url);
+  const key = secretValue(ctl, "jackett.api_key");
+  if (key !== null) put("jackett", "api_key", key, undefined);
+  put("jackett", "indexer", ctl["jackett.indexer"].value.trim() || "all", j.indexer);
+  put("jackett", "queries", ctl["jackett.queries"].value.split(/[\s,，]+/).filter(Boolean), j.queries);
+  put("jackett", "interval", int("jackett.interval"), j.interval);
+  if (invalid) {
+    toast("请填写整数");
+    ctl[invalid].focus();
+    return null;
+  }
+  return changes;
+}
+
+async function saveSettings(button, errorBox, request, message) {
+  button.disabled = true;
+  errorBox.replaceChildren();
+  try {
+    const data = await request();
+    state.config = await api("/api/config");
+    $("nav-releases").hidden = !releasesEnabled();
+    refreshReleaseCount();
+    toast(message);
+    renderSettings(data);
+  } catch (error) {
+    if (error instanceof AuthError) return;
+    errorBox.replaceChildren(notice("bad", error.message));
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  } finally {
+    button.disabled = false;
+  }
+}
+
+async function testConnection(button, output, url, body, describe) {
+  button.disabled = true;
+  output.className = "test-result";
+  output.textContent = "连接中…";
+  try {
+    const result = await api(url, { json: body });
+    output.classList.add("ok");
+    output.textContent = describe(result);
+  } catch (error) {
+    if (error instanceof AuthError) return;
+    output.classList.add("bad");
+    output.textContent = error.message;
+  } finally {
+    button.disabled = false;
+  }
 }
 
 // ---------- 资源（Jackett 候选 + qBittorrent 下载） ----------
@@ -935,7 +1140,7 @@ async function route() {
   try {
     if (state.route.name === "browse") await showSource(state.route.path);
     else if (state.route.name === "job") await showJob(state.route.id, state.route.tab);
-    else if (state.route.name === "settings") showSettings();
+    else if (state.route.name === "settings") await showSettings();
     else if (state.route.name === "releases") {
       if (!releasesEnabled()) throw new Error("没有配置 Jackett 或 qBittorrent，资源页不可用。请在配置文件中设置 [jackett] 和 [qbittorrent]。");
       await showReleases(state.route.group);

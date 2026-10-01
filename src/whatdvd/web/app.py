@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import secrets
 import time
+from dataclasses import replace
 from collections.abc import AsyncIterator, Awaitable, Callable
 from importlib.resources import files
 from pathlib import Path
@@ -21,13 +22,23 @@ from ..post import DEFAULT_TEMPLATE
 from ..runner import Runner, SubprocessRunner
 from ..sources import find_sources, is_iso
 from ..checks import describe_extra_files, find_extra_files
-from ..indexer import Jackett
-from ..qbit import QBittorrent
+from ..indexer import IndexerError, Jackett
+from ..qbit import QBittorrent, QbitError
+from ..resolution import ASPECT_MODES
 from ..store import Status, Store
 from ..torrent import PIECE_LENGTH_RANGE, make_torrent
-from ..upload import Pixhost
+from ..upload import PIXHOST_DOMAINS, Pixhost
 from ..workflow import HostFactory, RunOptions, RunResult, check_tools, output_title, run
-from .config import ServerConfig
+from .config import (
+    EDITABLE,
+    SECRETS,
+    ConfigError,
+    ServerConfig,
+    key_name,
+    load_config,
+    read_settings,
+    write_settings,
+)
 from .jobs import Job, JobManager, JobReporter, stream_events
 from .watcher import Watcher, WatcherError
 
@@ -47,6 +58,48 @@ SECURITY_HEADERS = {
 
 class LoginRequest(BaseModel):
     token: str
+
+
+class QbitTest(BaseModel):
+    url: str
+    username: str = ""
+    password: str | None = None
+    """None 表示用已保存的密码。"""
+
+
+class JackettTest(BaseModel):
+    url: str
+    api_key: str | None = None
+    """None 表示用已保存的 API Key。"""
+
+
+def settings_values(c: ServerConfig) -> dict[str, Any]:
+    """设置页面中可以修改的项的当前值；密码和 API Key 只返回是否已设置。"""
+    qb, jk = c.qbit, c.jackett
+    return {
+        "max_jobs": c.max_jobs,
+        "temp_dir": str(c.temp_dir) if c.temp_dir else "",
+        "screenshots": {"count": c.screenshot_count, "aspect": c.aspect, "dark_filter": c.dark_filter},
+        "pixhost": {"domain": c.pixhost_domain, "proxy": c.proxy or ""},
+        "torrent": {"announces": list(c.announces), "piece_length": c.piece_length},
+        "post": {"template_text": c.template_text or "", "template": c.template_file or ""},
+        "qbittorrent": {
+            "url": qb.url if qb else "",
+            "username": qb.username if qb else "",
+            "password_set": bool(qb and qb.password),
+            "category": qb.category if qb else "whatdvd",
+            "save_path": (qb.save_path or "") if qb else "",
+            "path_map": dict(qb.path_map) if qb else {},
+            "interval": qb.interval if qb else 60,
+        },
+        "jackett": {
+            "url": jk.url if jk else "",
+            "api_key_set": bool(jk and jk.api_key),
+            "indexer": jk.indexer if jk else "all",
+            "queries": list(jk.queries) if jk else ["DVD9", "DVD5"],
+            "interval": jk.interval if jk else 60,
+        },
+    }
 
 
 class RunRequest(BaseModel):
@@ -161,43 +214,57 @@ def create_app(
     jackett: Jackett | None = None,
     background: bool = True,
 ) -> FastAPI:
-    """qbit / jackett 不传时按配置创建；background=False 时不启动后台轮询（测试用）。"""
-    runner = runner or SubprocessRunner()
-    host_factory = host_factory or (lambda: Pixhost(config.pixhost_domain, proxy=config.proxy))
-    if qbit is None and config.qbit is not None:
-        qbit = QBittorrent(config.qbit.url, config.qbit.username, config.qbit.password)
-    if jackett is None and config.jackett is not None:
-        jackett = Jackett(config.jackett.url, config.jackett.api_key, indexer=config.jackett.indexer)
+    """qbit / jackett 不传时按配置创建；background=False 时不启动后台轮询（测试用）。
 
+    设置页面保存后，live 换成新的配置：之后的任务、图床、qB / Jackett 连接都按新配置。
+    """
+    runner = runner or SubprocessRunner()
+    live = [config]
+
+    def cfg() -> ServerConfig:
+        return live[0]
+
+    host_factory = host_factory or (lambda: Pixhost(cfg().pixhost_domain, proxy=cfg().proxy))
     manager = JobManager(config.max_jobs)
     watcher: Watcher | None = None
+    watcher_task: asyncio.Task[None] | None = None
+    store: Store | None = None
+
+    async def start_watcher(qb: QBittorrent | None = None, jk: Jackett | None = None) -> None:
+        nonlocal watcher, watcher_task, store
+        c = cfg()
+        if qb is None and c.qbit is not None:
+            qb = QBittorrent(c.qbit.url, c.qbit.username, c.qbit.password)
+        if jk is None and c.jackett is not None:
+            jk = Jackett(c.jackett.url, c.jackett.api_key, indexer=c.jackett.indexer)
+        if qb is None and jk is None:
+            return
+        store = store or Store(c.database)
+        watcher = Watcher(c, store, submit_run=submit_run, get_job=manager.get, qbit=qb, jackett=jk)
+        app.state.watcher = watcher
+        if background:
+            watcher_task = asyncio.create_task(watcher.run_forever())
+
+    async def stop_watcher() -> None:
+        nonlocal watcher, watcher_task
+        if watcher_task is not None:
+            watcher_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await watcher_task
+            watcher_task = None
+        if watcher is not None:
+            watcher.close()
+            watcher = None
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        nonlocal watcher
-        task = None
-        if qbit is not None or jackett is not None:
-            watcher = Watcher(
-                config,
-                Store(config.database),
-                submit_run=submit_run,
-                get_job=manager.get,
-                qbit=qbit,
-                jackett=jackett,
-            )
-            app.state.watcher = watcher
-            if background:
-                task = asyncio.create_task(watcher.run_forever())
+        await start_watcher(qbit, jackett)
         try:
             yield
         finally:
-            if task is not None:
-                task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
-            if watcher is not None:
-                watcher.close()
-                watcher.store.close()
+            await stop_watcher()
+            if store is not None:
+                store.close()
 
     app = FastAPI(title="whatdvd", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.jobs = manager
@@ -211,7 +278,7 @@ def create_app(
     def token_ok(token: str | None) -> bool:
         if not token:
             return False
-        return secrets.compare_digest(token.encode(), config.token.encode())
+        return secrets.compare_digest(token.encode(), cfg().token.encode())
 
     def require_auth(request: Request) -> None:
         token = request.cookies.get(COOKIE)
@@ -224,7 +291,7 @@ def create_app(
     def set_cookie(response: Response, request: Request) -> None:
         response.set_cookie(
             COOKIE,
-            config.token,
+            cfg().token,
             max_age=COOKIE_MAX_AGE,
             httponly=True,
             samesite="strict",
@@ -239,7 +306,7 @@ def create_app(
             resolved = path.resolve(strict=True)
         except (OSError, RuntimeError):
             raise HTTPException(404, "路径不存在") from None
-        if not any(resolved.is_relative_to(root) for root in config.roots):
+        if not any(resolved.is_relative_to(root) for root in cfg().roots):
             raise HTTPException(403, "路径不在允许的目录内")
         return resolved
 
@@ -248,7 +315,7 @@ def create_app(
             resolved = path.resolve(strict=True)
         except (OSError, RuntimeError):
             return False
-        return any(resolved.is_relative_to(root) for root in config.roots)
+        return any(resolved.is_relative_to(root) for root in cfg().roots)
 
     auth = [Depends(require_auth)]
 
@@ -279,29 +346,138 @@ def create_app(
 
     @app.get("/api/config", dependencies=auth)
     async def get_config() -> dict[str, Any]:
+        c = cfg()
         return {
-            "roots": [str(root) for root in config.roots],
-            "screenshot_count": config.screenshot_count,
-            "aspect": config.aspect,
-            "dark_filter": config.dark_filter,
-            "pixhost_domain": config.pixhost_domain,
-            "announces": list(config.announces),
-            "piece_length": config.piece_length,
+            "roots": [str(root) for root in c.roots],
+            "screenshot_count": c.screenshot_count,
+            "aspect": c.aspect,
+            "dark_filter": c.dark_filter,
+            "pixhost_domain": c.pixhost_domain,
+            "announces": list(c.announces),
+            "piece_length": c.piece_length,
             "piece_length_range": [PIECE_LENGTH_RANGE.start, PIECE_LENGTH_RANGE.stop - 1],
-            "listen": f"{config.host}:{config.port}",
-            "output_dir": str(config.output_dir),
-            "temp_dir": str(config.temp_dir) if config.temp_dir else None,
-            "max_jobs": config.max_jobs,
-            "proxy": bool(config.proxy),
-            "custom_template": config.template != DEFAULT_TEMPLATE,
-            "qbit": {"url": config.qbit.url, "category": config.qbit.category, "path_map": config.qbit.path_map}
-            if config.qbit
+            "listen": f"{c.host}:{c.port}",
+            "output_dir": str(c.output_dir),
+            "temp_dir": str(c.temp_dir) if c.temp_dir else None,
+            "max_jobs": c.max_jobs,
+            "proxy": bool(c.proxy),
+            "custom_template": c.template != DEFAULT_TEMPLATE,
+            "qbit": {"url": c.qbit.url, "category": c.qbit.category, "path_map": c.qbit.path_map}
+            if c.qbit
             else None,
-            "jackett": {"url": config.jackett.url, "indexer": config.jackett.indexer, "queries": config.jackett.queries,
-                        "interval": config.jackett.interval}
-            if config.jackett
+            "jackett": {"url": c.jackett.url, "indexer": c.jackett.indexer, "queries": c.jackett.queries,
+                        "interval": c.jackett.interval}
+            if c.jackett
             else None,
         }
+
+    # ---------- 设置 ----------
+
+    def settings_payload() -> dict[str, Any]:
+        c = cfg()
+        return {
+            "values": settings_values(c),
+            "default_template": DEFAULT_TEMPLATE,
+            "overridden": sorted(c.overridden),
+            "fixed": {
+                "listen": f"{c.host}:{c.port}",
+                "roots": [str(root) for root in c.roots],
+                "output_dir": str(c.output_dir),
+                "database": str(c.database),
+                "token": {"config": "配置文件", "env": "环境变量 WHATDVD_TOKEN", "file": str(c.token_file),
+                          "new": str(c.token_file)}.get(c.token_source, c.token_source),
+                "config_file": str(c.config_file) if c.config_file else None,
+                "settings_file": str(c.settings_file),
+            },
+            "options": {
+                "aspect_modes": list(ASPECT_MODES),
+                "pixhost_domains": list(PIXHOST_DOMAINS),
+                "piece_length_range": [PIECE_LENGTH_RANGE.start, PIECE_LENGTH_RANGE.stop - 1],
+            },
+        }
+
+    async def apply_settings(overrides: dict[tuple[str, str], Any]) -> None:
+        """校验通过才写入设置文件，然后换成新配置：调整任务并发数，必要时重建 qB / Jackett 连接。"""
+        old = cfg()
+        try:
+            new = load_config(old.config_file, host=old.host, port=old.port, roots=old.roots, settings=overrides)
+        except ConfigError as error:
+            raise HTTPException(400, str(error)) from None
+        new = replace(new, token=old.token, token_source=old.token_source, token_file=old.token_file)
+        try:
+            write_settings(old.settings_file, overrides)
+        except OSError as error:
+            raise HTTPException(500, f"无法保存设置到 {old.settings_file}：{error.strerror}") from None
+        live[0] = new
+        if new.max_jobs != old.max_jobs:
+            await manager.set_limit(new.max_jobs)
+        if (new.qbit, new.jackett) != (old.qbit, old.jackett):
+            await stop_watcher()
+            await start_watcher()
+
+    @app.get("/api/settings", dependencies=auth)
+    async def get_settings() -> dict[str, Any]:
+        return settings_payload()
+
+    @app.put("/api/settings", dependencies=auth)
+    async def put_settings(body: dict[str, Any]) -> dict[str, Any]:
+        """只需提交改动的项。值为 null：去掉设置页面的覆盖，恢复为配置文件或默认值；
+        密码和 API Key 为 null 时保持不变，为 "" 时清空。"""
+        try:
+            overrides = read_settings(cfg().settings_file)
+        except ConfigError as error:
+            raise HTTPException(500, str(error)) from None
+        tables = {table for table, _ in EDITABLE if table}
+        changes: list[tuple[tuple[str, str], Any]] = []
+        for name, value in body.items():
+            if name in tables:
+                if not isinstance(value, dict):
+                    raise HTTPException(400, f"{name} 应该是一个表")
+                changes += [((name, key), item) for key, item in value.items()]
+            else:
+                changes.append((("", name), value))
+        for key, value in changes:
+            if key not in EDITABLE:
+                raise HTTPException(400, f"{key_name(key)} 不能在设置页面中修改")
+            if value is None:
+                if key not in SECRETS:
+                    overrides.pop(key, None)
+            else:
+                overrides[key] = value
+        await apply_settings(overrides)
+        return settings_payload()
+
+    @app.delete("/api/settings", dependencies=auth)
+    async def reset_settings() -> dict[str, Any]:
+        """去掉设置页面保存的所有设置，恢复为配置文件和默认值。"""
+        await apply_settings({})
+        return settings_payload()
+
+    @app.post("/api/settings/test/qbittorrent", dependencies=auth)
+    async def test_qbittorrent(body: QbitTest) -> dict[str, Any]:
+        c = cfg()
+        password = body.password if body.password is not None else (c.qbit.password if c.qbit else "")
+        client = QBittorrent(body.url.strip(), body.username, password, timeout=10)
+        try:
+            version = await asyncio.to_thread(client.version)
+        except QbitError as error:
+            raise HTTPException(400, str(error)) from None
+        finally:
+            client.close()
+        return {"version": version}
+
+    @app.post("/api/settings/test/jackett", dependencies=auth)
+    async def test_jackett(body: JackettTest) -> dict[str, Any]:
+        c = cfg()
+        api_key = body.api_key if body.api_key is not None else (c.jackett.api_key if c.jackett else "")
+        client = Jackett(body.url.strip(), api_key, timeout=30)
+        try:
+            indexers = await asyncio.to_thread(client.indexers)
+        except IndexerError as error:
+            raise HTTPException(400, str(error)) from None
+        finally:
+            client.close()
+        return {"indexers": [{"id": i, "name": n} for i, n in indexers]}
 
     # ---------- 资源候选（Jackett + qBittorrent） ----------
 
@@ -388,7 +564,7 @@ def create_app(
     async def browse(path: str | None = None) -> dict[str, Any]:
         if path is None:
             entries = [
-                {"name": str(root), "path": str(root), "kind": _entry_kind(root) or "dir"} for root in config.roots
+                {"name": str(root), "path": str(root), "kind": _entry_kind(root) or "dir"} for root in cfg().roots
             ]
             return {"path": None, "parent": None, "kind": None, "entries": entries}
 
@@ -407,18 +583,18 @@ def create_app(
             if kind is not None:
                 entries.append({"name": child.name, "path": str(child), "kind": kind})
         entries.sort(key=lambda e: e["kind"] == "iso")
-        parent = None if current in config.roots else str(current.parent)
+        parent = None if current in cfg().roots else str(current.parent)
         return {"path": str(current), "parent": parent, "kind": _entry_kind(current), "entries": entries}
 
     def run_worker(job: Job, reporter: JobReporter) -> dict[str, Any]:
         options = RunOptions(
             output_dir=job.output_dir,
             count=job.params["count"],
-            temp_dir=config.temp_dir,
+            temp_dir=cfg().temp_dir,
             upload=job.params["upload"],
-            template=config.template,
-            aspect=config.aspect,
-            dark_filter=config.dark_filter,
+            template=cfg().template,
+            aspect=cfg().aspect,
+            dark_filter=cfg().dark_filter,
         )
         return _serialize_run(run(runner, job.path, options, reporter, host_factory))
 
@@ -445,13 +621,13 @@ def create_app(
         }
 
     def submit_run(path: Path, count: int | None = None, upload: bool = True) -> Job:
-        params: dict[str, Any] = {"count": count or config.screenshot_count, "upload": upload}
-        return manager.submit(Job("run", path, params, config.output_dir / output_title(path)), run_worker)
+        params: dict[str, Any] = {"count": count or cfg().screenshot_count, "upload": upload}
+        return manager.submit(Job("run", path, params, cfg().output_dir / output_title(path)), run_worker)
 
     @app.post("/api/jobs", dependencies=auth, status_code=201)
     async def create_job(body: JobRequest) -> dict[str, Any]:
         path = resolve_allowed(body.path)
-        output_dir = config.output_dir / output_title(path)
+        output_dir = cfg().output_dir / output_title(path)
         if isinstance(body, RunRequest):
             job = submit_run(path, body.count, body.upload)
         else:
