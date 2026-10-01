@@ -119,6 +119,7 @@ def test_fetch_torrent_and_magnet_redirect() -> None:
     [
         ("Фильм / Film (2002) DVD9 | P -Custom", "Custom"),
         ("Фильм / Film (1926) DVD9 | Sub-Custom", "Custom"),
+        ("Фильм / Film (2002) DVD9 | D, P | Custom | iTunes", "Custom"),
         ("Фильм / Film (2005) DVD5 | P2-сжатый", "压缩过的盘"),
         ("Фильм / Film (2002) DVD5-Сжатый", "压缩过的盘"),
         ("Фильм (1947) DVD5-Реставрация", "修复版"),
@@ -164,6 +165,10 @@ def test_classify_disc_count(title: str, kind: str, discs: int) -> None:
         ("Film (2002) DVD5 | P2, L1", "带俄语配音标记（P2, L1）"),
         ("Film (2002) DVD9 от New-Team | D-Лицензия", "俄罗斯正版盘"),
         ("Film (2002) DVD5 | A-PanScan", "Pan & Scan"),
+        # rutor 网页上的原始写法（直连时），配音标记不一定在最后一段
+        ("Film (2002) DVD9 | D, P, A | FullScreen", "带俄语配音标记（D, P, A）"),
+        ("Film (2002) DVD9 | P2 | Лицензия", "带俄语配音标记（P2）"),
+        ("Film (2002) DVD9 | Лицензия", "俄罗斯正版盘"),
     ],
 )
 def test_classify_notes(title: str, note: str) -> None:

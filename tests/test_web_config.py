@@ -202,3 +202,13 @@ def test_invalid_qbittorrent_and_jackett(tmp_path: Path, section: str, message: 
     root.mkdir()
     with pytest.raises(ConfigError, match=message):
         load_config(write(tmp_path, f'roots = ["{root}"]\ntoken = "t"\n{section}\n'))
+
+
+def test_rutor_config(tmp_path: Path) -> None:
+    root = tmp_path / "media"
+    root.mkdir()
+    config = load_config(write(tmp_path, f'roots = ["{root}"]\ntoken = "t"\n[rutor]\nurl = "https://rutor.is/"\ninterval = 0\n'))
+    assert config.rutor is not None
+    assert (config.rutor.url, config.rutor.queries, config.rutor.interval) == ("https://rutor.is", ("DVD9", "DVD5"), 0)
+    with pytest.raises(ConfigError, match="rutor.interval"):
+        load_config(write(tmp_path, f'roots = ["{root}"]\ntoken = "t"\n[rutor]\nurl = "https://rutor.is"\ninterval = 3\n'))

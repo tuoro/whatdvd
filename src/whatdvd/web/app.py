@@ -25,6 +25,7 @@ from ..checks import describe_extra_files, find_extra_files
 from ..indexer import IndexerError, Jackett
 from ..qbit import QBittorrent, QbitError
 from ..resolution import ASPECT_MODES
+from ..rutor import Rutor
 from ..store import Status, Store
 from ..torrent import PIECE_LENGTH_RANGE, make_torrent
 from ..upload import PIXHOST_DOMAINS, Pixhost
@@ -67,6 +68,10 @@ class QbitTest(BaseModel):
     """None 表示用已保存的密码。"""
 
 
+class RutorTest(BaseModel):
+    url: str
+
+
 class JackettTest(BaseModel):
     url: str
     api_key: str | None = None
@@ -91,6 +96,11 @@ def settings_values(c: ServerConfig) -> dict[str, Any]:
             "save_path": (qb.save_path or "") if qb else "",
             "path_map": dict(qb.path_map) if qb else {},
             "interval": qb.interval if qb else 60,
+        },
+        "rutor": {
+            "url": c.rutor.url if c.rutor else "",
+            "queries": list(c.rutor.queries) if c.rutor else ["DVD9", "DVD5"],
+            "interval": c.rutor.interval if c.rutor else 60,
         },
         "jackett": {
             "url": jk.url if jk else "",
@@ -212,6 +222,7 @@ def create_app(
     host_factory: HostFactory | None = None,
     qbit: QBittorrent | None = None,
     jackett: Jackett | None = None,
+    rutor: Rutor | None = None,
     background: bool = True,
 ) -> FastAPI:
     """qbit / jackett 不传时按配置创建；background=False 时不启动后台轮询（测试用）。
@@ -230,17 +241,21 @@ def create_app(
     watcher_task: asyncio.Task[None] | None = None
     store: Store | None = None
 
-    async def start_watcher(qb: QBittorrent | None = None, jk: Jackett | None = None) -> None:
+    async def start_watcher(
+        qb: QBittorrent | None = None, jk: Jackett | None = None, ru: Rutor | None = None
+    ) -> None:
         nonlocal watcher, watcher_task, store
         c = cfg()
+        if ru is None and c.rutor is not None:
+            ru = Rutor(c.rutor.url)
         if qb is None and c.qbit is not None:
             qb = QBittorrent(c.qbit.url, c.qbit.username, c.qbit.password)
         if jk is None and c.jackett is not None:
             jk = Jackett(c.jackett.url, c.jackett.api_key, indexer=c.jackett.indexer)
-        if qb is None and jk is None:
+        if qb is None and jk is None and ru is None:
             return
         store = store or Store(c.database)
-        watcher = Watcher(c, store, submit_run=submit_run, get_job=manager.get, qbit=qb, jackett=jk)
+        watcher = Watcher(c, store, submit_run=submit_run, get_job=manager.get, qbit=qb, jackett=jk, rutor=ru)
         app.state.watcher = watcher
         if background:
             watcher_task = asyncio.create_task(watcher.run_forever())
@@ -258,7 +273,7 @@ def create_app(
 
     @contextlib.asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        await start_watcher(qbit, jackett)
+        await start_watcher(qbit, jackett, rutor)
         try:
             yield
         finally:
@@ -365,6 +380,7 @@ def create_app(
             "qbit": {"url": c.qbit.url, "category": c.qbit.category, "path_map": c.qbit.path_map}
             if c.qbit
             else None,
+            "rutor": {"url": c.rutor.url, "queries": c.rutor.queries, "interval": c.rutor.interval} if c.rutor else None,
             "jackett": {"url": c.jackett.url, "indexer": c.jackett.indexer, "queries": c.jackett.queries,
                         "interval": c.jackett.interval}
             if c.jackett
@@ -411,7 +427,7 @@ def create_app(
         live[0] = new
         if new.max_jobs != old.max_jobs:
             await manager.set_limit(new.max_jobs)
-        if (new.qbit, new.jackett) != (old.qbit, old.jackett):
+        if (new.qbit, new.jackett, new.rutor) != (old.qbit, old.jackett, old.rutor):
             await stop_watcher()
             await start_watcher()
 
@@ -466,6 +482,20 @@ def create_app(
             client.close()
         return {"version": version}
 
+    @app.post("/api/settings/test/rutor", dependencies=auth)
+    async def test_rutor(body: RutorTest) -> dict[str, Any]:
+        url = body.url.strip()
+        if not url.startswith(("http://", "https://")):
+            raise HTTPException(400, "地址必须以 http:// 或 https:// 开头")
+        client = Rutor(url, delay=0, timeout=20)
+        try:
+            total, releases = await asyncio.to_thread(client.search, "DVD9")
+        except IndexerError as error:
+            raise HTTPException(400, str(error)) from None
+        finally:
+            client.close()
+        return {"total": total, "page": len(releases)}
+
     @app.post("/api/settings/test/jackett", dependencies=auth)
     async def test_jackett(body: JackettTest) -> dict[str, Any]:
         c = cfg()
@@ -483,7 +513,7 @@ def create_app(
 
     def get_watcher() -> Watcher:
         if watcher is None:
-            raise HTTPException(404, "没有配置 Jackett 或 qBittorrent")
+            raise HTTPException(404, "没有配置 Jackett、rutor 直连或 qBittorrent")
         return watcher
 
     def watcher_error(error: WatcherError) -> HTTPException:

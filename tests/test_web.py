@@ -533,3 +533,17 @@ def test_release_filters_and_paging(tmp_path: Path, media: Path) -> None:
 
         response = client.post("/api/releases/backfill")
         assert response.status_code == 202 and response.json()["total"] > 100
+
+
+def test_settings_enable_rutor(settings_client: tuple[TestClient, Path]) -> None:
+    client, _ = settings_client
+    assert client.get("/api/releases").status_code == 404
+    data = client.put("/api/settings", json={"rutor": {"url": "https://rutor.info", "interval": 0}}).json()
+    assert data["values"]["rutor"]["url"] == "https://rutor.info"
+    assert client.get("/api/config").json()["rutor"]["url"] == "https://rutor.info"
+    status = client.get("/api/releases").json()["status"]
+    assert status["rutor"] is True and status["jackett"] is False
+    response = client.post("/api/settings/test/rutor", json={"url": "ftp://x"})
+    assert response.status_code == 400
+    response = client.post("/api/settings/test/rutor", json={"url": "http://127.0.0.1:1"})
+    assert response.status_code == 400 and "连不上 rutor" in response.json()["detail"]

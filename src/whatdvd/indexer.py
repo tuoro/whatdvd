@@ -178,12 +178,14 @@ class Verdict:
 
 
 def _dub_codes(title: str) -> list[str]:
-    if "|" not in title:
-        return []
-    tail = title.rsplit("|", 1)[1].translate(_LOOKALIKES)
-    tail = re.split(r"\s*-\s*", tail, maxsplit=1)[0]  # 去掉 "-FullScreen" 之类的后缀
-    codes = [part.strip() for part in tail.split(",") if part.strip()]
-    return codes if codes and all(_DUB_CODES.match(code) for code in codes) else []
+    """标题中 "|" 之后的俄语配音标记。rutor 原始写法 "DVD9 | D, P | FullScreen"，
+    Jackett 会改写成 "DVD9 | D, P-FullScreen"，两种都认。"""
+    for segment in title.split("|")[1:]:
+        segment = re.split(r"\s*-\s*", segment.translate(_LOOKALIKES), maxsplit=1)[0]
+        codes = [part.strip() for part in segment.split(",") if part.strip()]
+        if codes and all(_DUB_CODES.match(code) for code in codes):
+            return codes
+    return []
 
 
 def classify(title: str, size: int, seeders: int | None = None) -> Verdict:
@@ -193,7 +195,7 @@ def classify(title: str, size: int, seeders: int | None = None) -> Verdict:
 
     counts = {5: 0, 9: 0}
     for count, layer in _DISCS.findall(title.translate(_LOOKALIKES)):
-        counts[int(layer)] += int(count) if count else 1
+        counts[int(layer)] += int(count) if count and int(count) > 0 else 1  # "0 DVD9" 不是 0 张盘
     discs = counts[5] + counts[9]
     if discs == 0:
         return Verdict(accepted=False, reason="标题中没有 DVD5 / DVD9")

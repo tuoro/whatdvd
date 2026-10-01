@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import functools
 import hashlib
 import logging
 import time
@@ -17,6 +18,8 @@ from typing import Any
 
 from ..indexer import IndexerError, Jackett, Release, classify
 from ..qbit import PathMap, QBittorrent, QbitError, magnet_info_hash, torrent_info_hash
+from ..rutor import SOURCE as RUTOR_SOURCE
+from ..rutor import Rutor
 from ..store import Record, Status, Store
 from .config import ServerConfig
 from .jobs import Job
@@ -27,6 +30,17 @@ ACTIVE: tuple[Status, ...] = ("sent", "downloading")
 
 BACKFILL_FROM = 1920
 """全面搜索从这一年开始。站点每次搜索最多返回 100 条，按“关键词 年份”拆开才能搜到更早的资源。"""
+
+
+Step = tuple[str, Callable[[], Sequence[Release]]]
+"""一次搜索：（说明，执行后返回资源）。"""
+
+MAX_CONSECUTIVE_FAILURES = 3
+"""连续失败这么多次就停止（网站或 Jackett 不可用时，不再发出剩下的请求）。"""
+
+
+def _first_page(rutor: Rutor, query: str) -> list[Release]:
+    return rutor.search(query)[1]
 
 
 def backfill_queries(queries: Sequence[str], until: int | None = None) -> list[str]:
@@ -63,11 +77,13 @@ class Watcher:
         get_job: Callable[[str], Job | None],
         qbit: QBittorrent | None = None,
         jackett: Jackett | None = None,
+        rutor: Rutor | None = None,
     ) -> None:
         self.config = config
         self.store = store
         self.qbit = qbit
         self.jackett = jackett
+        self.rutor = rutor
         self._submit_run = submit_run
         self._get_job = get_job
         self._path_map = PathMap(config.qbit.path_map if config.qbit else ())
@@ -79,6 +95,7 @@ class Watcher:
     def status(self) -> dict[str, Any]:
         return {
             "jackett": self.jackett is not None,
+            "rutor": self.rutor is not None,
             "qbit": self.qbit is not None,
             "last_search": self.state.last_search,
             "search_error": self.state.search_error,
@@ -102,6 +119,8 @@ class Watcher:
             self.qbit.close()
         if self.jackett is not None:
             self.jackett.close()
+        if self.rutor is not None:
+            self.rutor.close()
 
     # ---------- 搜索 ----------
 
@@ -129,56 +148,94 @@ class Watcher:
             added += self.store.add_new(record)
         return added
 
-    def _search(self, queries: Sequence[str], progress: Callable[[int, int], None] | None = None) -> int:
-        assert self.jackett is not None
+    def _quick_steps(self, sources: set[str]) -> list[Step]:
+        """日常搜索：每个关键词只读第 1 页（最新的资源在最前面）。"""
+        steps: list[Step] = []
+        jackett, rutor = self.jackett, self.rutor
+        if "jackett" in sources and jackett is not None and self.config.jackett is not None:
+            steps += [(f"Jackett「{q}」", functools.partial(jackett.search, q)) for q in self.config.jackett.queries]
+        if "rutor" in sources and rutor is not None and self.config.rutor is not None:
+            steps += [(f"rutor「{q}」", functools.partial(_first_page, rutor, q)) for q in self.config.rutor.queries]
+        return steps
+
+    def _backfill_steps(self) -> list[Step]:
+        """全面搜索。Jackett：关键词 × 年份；rutor 直连：关键词本身和关键词 × 年份，每次都翻完所有页。"""
+        steps: list[Step] = []
+        jackett, rutor = self.jackett, self.rutor
+        if jackett is not None and self.config.jackett is not None:
+            steps += [
+                (f"Jackett「{q}」", functools.partial(jackett.search, q)) for q in backfill_queries(self.config.jackett.queries)
+            ]
+        if rutor is not None and self.config.rutor is not None:
+            queries = [*self.config.rutor.queries, *backfill_queries(self.config.rutor.queries)]
+            steps += [(f"rutor「{q}」", functools.partial(rutor.search_all, q)) for q in queries]
+        return steps
+
+    def _run_steps(self, steps: Sequence[Step], progress: Callable[[int, int], None] | None = None) -> tuple[int, list[str]]:
+        """逐个执行，单次失败不影响其余；连续失败 MAX_CONSECUTIVE_FAILURES 次时停止。返回（新增数，错误）。"""
         added = 0
-        for index, query in enumerate(queries, start=1):
-            added += self._ingest(self.jackett.search(query))
+        errors: list[str] = []
+        consecutive = 0
+        for index, (label, run) in enumerate(steps, start=1):
+            try:
+                added += self._ingest(run())
+                consecutive = 0
+            except IndexerError as error:
+                errors.append(f"{label}：{error}")
+                consecutive += 1
             if progress is not None:
                 progress(index, added)
-        return added
+            if consecutive >= MAX_CONSECUTIVE_FAILURES:
+                errors.append(f"连续 {consecutive} 次失败，停止搜索")
+                break
+        return added, errors
 
-    async def search(self) -> int:
-        if self.jackett is None:
-            raise WatcherError("没有配置 Jackett")
-        assert self.config.jackett is not None
+    @staticmethod
+    def _summary(errors: Sequence[str], total: int) -> str | None:
+        if not errors:
+            return None
+        failed = len([e for e in errors if not e.startswith("连续")])
+        return f"{failed}/{total} 次搜索失败。{errors[0]}" + (f"（{errors[-1]}）" if errors[-1].startswith("连续") else "")
+
+    async def search(self, sources: set[str] | None = None) -> int:
+        """sources：jackett、rutor，默认全部已配置的来源。全部失败时抛出 WatcherError。"""
+        steps = self._quick_steps(sources or {"jackett", "rutor"})
+        if not steps:
+            raise WatcherError("没有配置 Jackett 或 rutor 直连")
         async with self._search_lock:
             try:
-                added = await asyncio.to_thread(self._search, self.config.jackett.queries)
-            except IndexerError as error:
-                self.state.search_error = str(error)
-                raise WatcherError(str(error)) from None
+                added, errors = await asyncio.to_thread(self._run_steps, steps)
             finally:
                 self.state.last_search = time.time()
-            self.state.search_error = None
+            self.state.search_error = self._summary(errors, len(steps))
             self.state.last_added = added
+            if errors and len([e for e in errors if not e.startswith("连续")]) >= len(steps):
+                raise WatcherError(self.state.search_error or "搜索失败")
             return added
 
     def start_backfill(self) -> int:
-        """在后台按“关键词 年份”逐个搜索，返回要搜索的次数。同一时间只能有一个搜索。"""
-        if self.jackett is None or self.config.jackett is None:
-            raise WatcherError("没有配置 Jackett")
+        """在后台全面搜索，返回搜索次数。同一时间只能有一个搜索。"""
+        steps = self._backfill_steps()
+        if not steps:
+            raise WatcherError("没有配置 Jackett 或 rutor 直连")
         if self._search_lock.locked() or self.state.backfill_running:
             raise WatcherError("正在搜索，请等这次搜索完成")
-        queries = backfill_queries(self.config.jackett.queries)
         self.state.backfill_running = True
         self.state.backfill_done = self.state.backfill_added = 0
-        self.state.backfill_total = len(queries)
-        self._backfill_task = asyncio.get_running_loop().create_task(self._backfill(queries))
-        return len(queries)
+        self.state.backfill_total = len(steps)
+        self._backfill_task = asyncio.get_running_loop().create_task(self._backfill(steps))
+        return len(steps)
 
-    async def _backfill(self, queries: Sequence[str]) -> None:
+    async def _backfill(self, steps: Sequence[Step]) -> None:
         def progress(done: int, added: int) -> None:
             self.state.backfill_done, self.state.backfill_added = done, added
 
         async with self._search_lock:
             try:
-                added = await asyncio.to_thread(self._search, queries, progress)
-            except IndexerError as error:
-                self.state.search_error = f"全面搜索在第 {self.state.backfill_done + 1} 次查询时失败：{error}"
-                log.warning("%s", self.state.search_error)
-            else:
-                self.state.search_error = None
+                added, errors = await asyncio.to_thread(self._run_steps, steps, progress)
+                self.state.search_error = self._summary(errors, len(steps))
+                if errors:
+                    log.warning("全面搜索：%s", self.state.search_error)
                 log.info("全面搜索完成，新增 %d 个候选", added)
             finally:
                 self.state.backfill_running = False
@@ -191,9 +248,14 @@ class Watcher:
         qb = self.config.qbit
         torrent: bytes | None = None
         magnet = record.magnet
-        if record.download_url and self.jackett is not None:
+        fetch: Callable[[str], bytes | str] | None = None
+        if record.source == RUTOR_SOURCE and self.rutor is not None:
+            fetch = self.rutor.fetch  # d.rutor.info，不需要登录
+        elif self.jackett is not None:
+            fetch = self.jackett.fetch
+        if record.download_url and fetch is not None:
             try:
-                fetched = self.jackett.fetch(record.download_url)
+                fetched = fetch(record.download_url)
             except IndexerError:
                 if not magnet:
                     raise
@@ -329,19 +391,23 @@ class Watcher:
 
     async def run_forever(self) -> None:
         qb_interval = self.config.qbit.interval if self.config.qbit else 60
-        search_every = self.config.jackett.interval * 60 if self.config.jackett else 0
-        next_search = time.monotonic()
+        schedule = {  # 来源 → 间隔（秒），0 为只手动搜索
+            "jackett": self.config.jackett.interval * 60 if self.config.jackett and self.jackett else 0,
+            "rutor": self.config.rutor.interval * 60 if self.config.rutor and self.rutor else 0,
+        }
+        due = {source: time.monotonic() for source in schedule}
         while True:
             if self.qbit is not None:
                 try:
                     await self.sync()
                 except WatcherError as error:
                     log.warning("检查 qBittorrent 失败：%s", error)
-            if self.jackett is not None and search_every and time.monotonic() >= next_search:
-                next_search = time.monotonic() + search_every
-                try:
-                    added = await self.search()
-                    log.info("Jackett 搜索完成，新增 %d 个候选", added)
-                except WatcherError as error:
-                    log.warning("Jackett 搜索失败：%s", error)
-            await asyncio.sleep(qb_interval)
+            for source, every in schedule.items():
+                if every and time.monotonic() >= due[source] and not self.state.backfill_running:
+                    due[source] = time.monotonic() + every
+                    try:
+                        added = await self.search({source})
+                        log.info("%s 搜索完成，新增 %d 个候选", source, added)
+                    except WatcherError as error:
+                        log.warning("%s 搜索失败：%s", source, error)
+            await asyncio.sleep(qb_interval if self.qbit is not None else 60)

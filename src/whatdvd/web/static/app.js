@@ -768,6 +768,13 @@ function renderSettings(data) {
     password: secretValue(ctl, "qbittorrent.password"),
   }, (r) => `连接成功，qBittorrent ${r.version}`));
 
+  // rutor 测试：搜索 DVD9 第 1 页
+  const ruResult = h("small", { class: "test-result" });
+  const ruTest = h("button", { type: "button", class: "btn small glass" }, "测试连接");
+  ruTest.addEventListener("click", () => testConnection(ruTest, ruResult, "/api/settings/test/rutor", {
+    url: ctl["rutor.url"].value.trim(),
+  }, (r) => `连接成功，搜索 DVD9 共 ${r.total} 条结果`));
+
   // Jackett 测试：成功后把已配置的站点填进下拉框
   const jkResult = h("small", { class: "test-result" });
   const jkTest = h("button", { type: "button", class: "btn small glass" }, "测试连接");
@@ -808,6 +815,13 @@ function renderSettings(data) {
       row("路径映射", area("qbittorrent.path_map", pathMap, 2, "/downloads = /media/qb"),
         `${PATH_MAP_HINT}。两边看到的路径一样时留空。映射后的目录必须在允许浏览的目录内。`),
       row("检查间隔", number("qbittorrent.interval", v.qbittorrent.interval, 10, 3600), "秒")),
+    section("rutor 直连", "填写地址即启用：直接读取 rutor 的搜索页（公开站，不需要账号）。比通过 Jackett 多读翻页的结果，全面搜索能拿到几乎全部资源。启用后建议在 Jackett 中去掉 rutor，避免重复搜索。",
+      row("地址", h("span", { class: "inline" },
+        input("rutor.url", v.rutor.url, { placeholder: "https://rutor.info 或 https://rutor.is，留空不启用", list: "rutor-mirrors" }),
+        h("datalist", { id: "rutor-mirrors" }, h("option", { value: "https://rutor.info" }), h("option", { value: "https://rutor.is" })),
+        ruTest), ruResult),
+      row("搜索关键词", input("rutor.queries", v.rutor.queries.join(" ")), "多个用空格分隔"),
+      row("自动搜索", number("rutor.interval", v.rutor.interval, 0, 10080), "分钟一次，只读最新的一页；0 为只手动搜索")),
     section("Jackett", "填写地址和 API Key 即启用：在“资源”页搜索 DVD 原盘。",
       row("地址", h("span", { class: "inline" }, input("jackett.url", v.jackett.url, { placeholder: "例如 http://192.168.1.10:9117，留空不启用" }), jkTest), jkResult),
       row("API Key", secret("jackett.api_key", v.jackett.api_key_set, "Jackett 页面右上角的 API Key")),
@@ -900,6 +914,10 @@ function collectSettings(ctl, v, pathMapText) {
   }
   put("qbittorrent", "interval", int("qbittorrent.interval"), q.interval);
 
+  put("rutor", "url", ctl["rutor.url"].value.trim(), v.rutor.url);
+  put("rutor", "queries", ctl["rutor.queries"].value.split(/[\s,，]+/).filter(Boolean), v.rutor.queries);
+  put("rutor", "interval", int("rutor.interval"), v.rutor.interval);
+
   const j = v.jackett;
   put("jackett", "url", ctl["jackett.url"].value.trim(), j.url);
   const key = secretValue(ctl, "jackett.api_key");
@@ -966,7 +984,7 @@ const RELEASE_EMPTY = {
 };
 
 function releasesEnabled() {
-  return Boolean(state.config && (state.config.qbit || state.config.jackett));
+  return Boolean(state.config && (state.config.qbit || state.config.jackett || state.config.rutor));
 }
 
 async function refreshReleaseCount(counts) {
@@ -1032,18 +1050,21 @@ function renderReleases(group, data) {
   const s = data.status;
   const c = state.config;
   const bf = s.backfill;
+  const searchable = s.jackett || s.rutor;
+  const sources = [s.jackett ? `Jackett（${c.jackett.indexer === "all" ? "全部站点" : c.jackett.indexer}）` : null,
+    s.rutor ? "rutor 直连" : null].filter(Boolean);
   const meta = [
-    h("span", {}, s.jackett ? `Jackett：${c.jackett.indexer === "all" ? "全部站点" : c.jackett.indexer}` : "未配置 Jackett"),
-    s.jackett && bf.running ? h("span", {}, `全面搜索中 ${bf.done}/${bf.total}，新增 ${bf.added} 个`) : null,
-    s.jackett && !bf.running ? h("span", {}, s.last_search ? `上次搜索 ${clock(s.last_search)}，新增 ${s.last_added} 个` : "还没有搜索") : null,
-    s.jackett && !bf.running && bf.last ? h("span", {}, `上次全面搜索 ${clock(bf.last)}，新增 ${bf.added} 个`) : null,
+    h("span", {}, sources.length ? `来源：${sources.join("、")}` : "未配置搜索来源"),
+    searchable && bf.running ? h("span", {}, `全面搜索中 ${bf.done}/${bf.total}，新增 ${bf.added} 个`) : null,
+    searchable && !bf.running && s.last_search ? h("span", {}, `上次搜索 ${clock(s.last_search)}，新增 ${s.last_added} 个`) : null,
+    searchable && !bf.running && bf.last ? h("span", {}, `上次全面搜索 ${clock(bf.last)}，新增 ${bf.added} 个`) : null,
     h("span", {}, s.qbit ? `qBittorrent 分类 ${c.qbit.category}` : "未配置 qBittorrent"),
   ].filter(Boolean);
-  const search = h("button", { type: "button", class: "btn amber", disabled: !s.jackett || s.searching },
+  const search = h("button", { type: "button", class: "btn amber", disabled: !searchable || s.searching },
     icon("search"), s.searching && !bf.running ? "搜索中…" : "立即搜索");
   search.addEventListener("click", () => releaseRequest(search, "/api/releases/refresh", (r) => `新增 ${r.added} 个候选`));
-  const backfill = h("button", { type: "button", class: "btn glass", disabled: !s.jackett || s.searching,
-    title: "站点每次搜索最多返回 100 条。按“关键词 年份”逐年搜索，可以找到更早发布的资源，需要几分钟。" },
+  const backfill = h("button", { type: "button", class: "btn glass", disabled: !searchable || s.searching,
+    title: "日常搜索只读最新的一页。全面搜索按“关键词 年份”逐年搜索（rutor 直连还会翻完每一页），可以找到更早发布的资源，需要几分钟。" },
   bf.running ? `全面搜索中 ${Math.round((bf.done / Math.max(bf.total, 1)) * 100)}%` : "按年份全面搜索");
   backfill.addEventListener("click", () => releaseRequest(backfill, "/api/releases/backfill", (r) => `开始全面搜索，共 ${r.total} 次查询`));
   const sync = h("button", { type: "button", class: "btn glass", disabled: !s.qbit }, icon("refresh"), "检查下载");
@@ -1054,7 +1075,7 @@ function renderReleases(group, data) {
       label, h("span", { class: "count" }, data.counts[name] || ""))));
 
   const problems = [];
-  if (s.search_error) problems.push(notice("bad", `Jackett：${s.search_error}`));
+  if (s.search_error) problems.push(notice("bad", `搜索：${s.search_error}`));
   if (s.sync_error) problems.push(notice("bad", `qBittorrent：${s.sync_error}`));
 
   const list = data.releases.length

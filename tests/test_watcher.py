@@ -1,6 +1,7 @@
 """后台轮询：模拟的 Jackett 与 qBittorrent，不访问网络。"""
 
 import asyncio
+import datetime
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -302,4 +303,74 @@ def test_backfill_error_is_reported(h: Harness) -> None:
     asyncio.run(scenario())
     status = h.watcher.status()
     assert status["backfill"]["running"] is False
-    assert "全面搜索在第 1 次查询时失败" in status["search_error"]
+    # 连续失败 3 次就停止，不再发出剩下的两百多次请求
+    assert status["search_error"].startswith("3/") and "连续 3 次失败，停止搜索" in status["search_error"]
+    assert status["backfill"]["done"] == 3
+
+
+# ---------- rutor 直连 ----------
+
+
+def _rutor_harness(tmp_path: Path, downloads: Path, total: int) -> tuple[Harness, Any]:
+    from dataclasses import replace
+
+    from test_rutor import FakeRutor
+
+    from whatdvd.rutor import Rutor
+    from whatdvd.web.config import RutorConfig
+
+    services = FakeServices()
+    h = Harness(tmp_path, downloads, services)
+    fake = FakeRutor(total)
+    h.config = replace(h.config, jackett=None, rutor=RutorConfig("https://rutor.info", queries=("DVD9",)))
+    h.watcher = Watcher(
+        h.config, h.watcher.store, submit_run=h.submit, get_job=h.jobs.get,
+        qbit=h.watcher.qbit, rutor=Rutor(delay=0, transport=httpx.MockTransport(fake)),
+    )
+    return h, fake
+
+
+def test_rutor_quick_search_reads_first_page_only(tmp_path: Path, downloads: Path) -> None:
+    h, fake = _rutor_harness(tmp_path, downloads, total=250)
+    assert h.run(h.watcher.search) == 100
+    assert fake.requests == ["/search/0/0/100/0/DVD9"]
+    record = h.watcher.store.list(["new"])[0]
+    assert record.source == "rutor 直连" and record.kind == "DVD9"
+    assert h.watcher.status()["rutor"] is True
+
+
+def test_rutor_backfill_reads_all_pages_of_keyword_and_years(tmp_path: Path, downloads: Path) -> None:
+    h, fake = _rutor_harness(tmp_path, downloads, total=150)
+
+    async def scenario() -> int:
+        total = h.watcher.start_backfill()
+        assert h.watcher._backfill_task is not None
+        await h.watcher._backfill_task
+        return total
+
+    from whatdvd.web.watcher import BACKFILL_FROM
+
+    steps = h.run(scenario)
+    assert steps == 1 + (datetime.date.today().year - BACKFILL_FROM + 1)  # 关键词本身 + 每个年份
+    assert fake.requests[:2] == ["/search/0/0/100/0/DVD9", "/search/1/0/100/0/DVD9"]  # 每次都翻页
+    assert len(fake.requests) == steps * 2
+    assert h.watcher.status()["backfill"]["added"] == 150  # 每次返回同样的 150 条，只新增一次
+
+
+def test_rutor_download_uses_rutor_torrent_file(tmp_path: Path, downloads: Path) -> None:
+    h, fake = _rutor_harness(tmp_path, downloads, total=1)
+    h.run(h.watcher.search)
+    record = h.watcher.store.list(["new"])[0]
+    pushed = h.run(lambda: h.watcher.download(record.id))
+    assert pushed.status == "sent"
+    assert fake.requests[-1] == "/download/1"  # 从 d.rutor.info 取种子，不经过 Jackett
+
+
+def test_same_torrent_from_jackett_and_rutor_is_listed_once(tmp_path: Path, downloads: Path) -> None:
+    h, _ = _rutor_harness(tmp_path, downloads, total=1)
+    h.run(h.watcher.search)
+    from whatdvd.indexer import Release
+
+    same = Release(guid="https://d.rutor.info/download/1", indexer="RuTor", title="Film 0 DVD9", size=1,
+                   published=None, details_url=None, download_url=None, magnet=None, info_hash=f"{1:040x}", seeders=1)
+    assert h.watcher._ingest([same]) == 0

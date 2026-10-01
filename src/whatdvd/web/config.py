@@ -58,6 +58,15 @@ class JackettConfig:
 
 
 @dataclass(frozen=True)
+class RutorConfig:
+    url: str = "https://rutor.info"
+    """rutor.info 或镜像 rutor.is（页面格式相同）。"""
+    queries: tuple[str, ...] = ("DVD9", "DVD5")
+    interval: int = 60
+    """自动搜索的间隔（分钟），0 为只手动刷新。自动搜索只读第 1 页（最新的 100 条）。"""
+
+
+@dataclass(frozen=True)
 class ServerConfig:
     roots: tuple[Path, ...]
     """允许在界面中浏览和处理的目录（已解析符号链接）。"""
@@ -82,6 +91,7 @@ class ServerConfig:
     """资源候选与下载状态（SQLite）。"""
     qbit: QbitConfig | None = None
     jackett: JackettConfig | None = None
+    rutor: RutorConfig | None = None
     config_file: Path | None = None
     """读取的配置文件；没有时为 None。"""
     settings_file: Path = DEFAULT_SETTINGS_FILE
@@ -125,6 +135,9 @@ _SCHEMA: dict[tuple[str, str], type | tuple[type, ...]] = {
     ("jackett", "indexer"): str,
     ("jackett", "queries"): list,
     ("jackett", "interval"): int,
+    ("rutor", "url"): str,
+    ("rutor", "queries"): list,
+    ("rutor", "interval"): int,
 }
 
 
@@ -135,7 +148,7 @@ EDITABLE: frozenset[tuple[str, str]] = frozenset(
         ("", "max_jobs"),
         ("", "temp_dir"),
         *((table, key) for table, key in _SCHEMA if table in ("screenshots", "pixhost", "torrent", "post")),
-        *((table, key) for table, key in _SCHEMA if table in ("qbittorrent", "jackett")),
+        *((table, key) for table, key in _SCHEMA if table in ("qbittorrent", "jackett", "rutor")),
     }
 )
 SECRETS: frozenset[tuple[str, str]] = frozenset({("qbittorrent", "password"), ("jackett", "api_key")})
@@ -323,6 +336,19 @@ def _jackett_config(flat: dict[tuple[str, str], Any]) -> JackettConfig | None:
     )
 
 
+def _rutor_config(flat: dict[tuple[str, str], Any]) -> RutorConfig | None:
+    url = flat.get(("rutor", "url"), "").strip()
+    if not url:
+        return None
+    queries = flat.get(("rutor", "queries"), ["DVD9", "DVD5"])
+    if not queries or not all(isinstance(q, str) and q.strip() for q in queries):
+        raise ConfigError("rutor.queries 必须是非空字符串列表")
+    interval = flat.get(("rutor", "interval"), 60)
+    if interval != 0 and interval < 10:
+        raise ConfigError("rutor.interval 不能小于 10 分钟（0 为只手动刷新）")
+    return RutorConfig(url=_http_url(url, "rutor.url"), queries=tuple(q.strip() for q in queries), interval=interval)
+
+
 def load_config(
     path: Path | None = None,
     *,
@@ -399,6 +425,7 @@ def load_config(
         database=_expand(flat.get(("", "database"), str(DEFAULT_DATABASE))).absolute(),
         qbit=_qbit_config(flat),
         jackett=_jackett_config(flat),
+        rutor=_rutor_config(flat),
         roots=tuple(resolved_roots),
         output_dir=_expand(flat.get(("", "output_dir"), str(DEFAULT_OUTPUT_DIR))).absolute(),
         token=token.token,
