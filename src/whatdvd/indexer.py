@@ -41,6 +41,14 @@ class Release:
     seeders: int | None
 
 
+# Jackett 的 "Add RUSSIAN to end of all titles"（kinozal 默认开着）在标题末尾加的标记，给 Sonarr / Radarr 用
+_LANGUAGE_SUFFIX = re.compile(r"\s+-\s+RUSSIAN$|\s+RUS$")
+
+
+def _strip_language_suffix(title: str) -> str:
+    return _LANGUAGE_SUFFIX.sub("", title)
+
+
 def parse_torznab(text: str) -> list[Release]:
     try:
         root = ET.fromstring(text)
@@ -65,7 +73,7 @@ def parse_torznab(text: str) -> list[Release]:
             Release(
                 guid=item.findtext("guid") or item.findtext("link") or item.findtext("title") or "",
                 indexer=(indexer.text if indexer is not None and indexer.text else channel_title),
-                title=(item.findtext("title") or "").strip(),
+                title=_strip_language_suffix((item.findtext("title") or "").strip()),
                 size=int(item.findtext("size") or 0),
                 published=published,
                 details_url=item.findtext("comments"),

@@ -234,3 +234,17 @@ def test_search_delay(monkeypatch: pytest.MonkeyPatch) -> None:
     jackett.search("DVD9 1999")
     jackett.search("DVD9 1998")
     assert len(sleeps) == 2 and all(0 < s <= 2.0 for s in sleeps)  # 第一次不等
+
+
+@pytest.mark.parametrize(
+    ("raw", "title"),
+    [
+        ("Чайка 1971 РУ DVD-5 - RUSSIAN", "Чайка 1971 РУ DVD-5"),
+        ("Film [2001, DVD9] RUS", "Film [2001, DVD9]"),
+        ("Russian Ark [2002, DVD9]", "Russian Ark [2002, DVD9]"),
+        ("Film RUSSIAN DVD9", "Film RUSSIAN DVD9"),
+    ],
+)
+def test_parse_torznab_strips_jackett_language_suffix(raw: str, title: str) -> None:
+    feed = f"<rss><channel><title>K</title><item><title>{raw}</title><guid>1</guid></item></channel></rss>"
+    assert parse_torznab(feed)[0].title == title
