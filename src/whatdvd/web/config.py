@@ -52,7 +52,8 @@ class JackettConfig:
     api_key: str
     indexer: str = "all"
     """Jackett 中的站点 ID，"all" 为全部已配置的站点。"""
-    queries: tuple[str, ...] = ("DVD9", "DVD5")
+    queries: tuple[str, ...] = ("DVD9", "DVD5", "DVD-9", "DVD-5")
+    """kinozal 的标题写 "DVD-9"，只搜 "DVD9" 一条也搜不到。"""
     interval: int = 60
     """自动搜索的间隔（分钟），0 为只手动刷新。"""
 
@@ -321,7 +322,7 @@ def _jackett_config(flat: dict[tuple[str, str], Any]) -> JackettConfig | None:
     api_key = flat.get(("jackett", "api_key"), "").strip() or os.environ.get(JACKETT_KEY_ENV, "").strip()
     if not api_key:
         raise ConfigError(f"使用 Jackett 需要 jackett.api_key（或环境变量 {JACKETT_KEY_ENV}）")
-    queries = flat.get(("jackett", "queries"), ["DVD9", "DVD5"])
+    queries = flat.get(("jackett", "queries"), list(JackettConfig.queries))
     if not queries or not all(isinstance(q, str) and q.strip() for q in queries):
         raise ConfigError("jackett.queries 必须是非空字符串列表")
     interval = flat.get(("jackett", "interval"), 60)

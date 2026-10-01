@@ -188,14 +188,42 @@ def _dub_codes(title: str) -> list[str]:
     return []
 
 
+# rutracker / kinozal 的配音写法："Dub + 2x MVO + AVO + Sub Rus"、"DUB, Sub"、"MVO (Ozz)"
+_VOICE = re.compile(r"(?<![A-Za-z])(\d+x\s*)?(DUB|Dub|MVO|DVO|AVO|VO)(?![A-Za-z])")
+
+
+def _voice_codes(title: str) -> list[str]:
+    codes: list[str] = []
+    for _, code in _VOICE.findall(title):
+        code = "Dub" if code.upper() == "DUB" else code
+        if code not in codes:
+            codes.append(code)
+    return codes
+
+
+def _looks_stripped(title: str) -> bool:
+    """Jackett 的 "Strip Cyrillic Letters" 删掉俄文后，会留下 "/ /" 或几乎没有字母的标题。"""
+    if re.search(r"[А-Яа-яЁё]", title):
+        return False
+    letters = re.sub(r"(?i)dvd-?\s?[59]|[^A-Za-z]", "", title)
+    return bool(re.search(r"(^|[\s\[(])/\s+/", title)) or len(letters) < 3
+
+
 def classify(title: str, size: int, seeders: int | None = None) -> Verdict:
     for pattern, reason in _EXCLUDE:
         if pattern.search(title):
             return Verdict(accepted=False, reason=reason)
 
-    counts = {5: 0, 9: 0}
+    # 写明数量的累加（"2 x DVD-9"、"2 DVD9 1DVD5"）；没写数量的同一种盘只算一张：
+    # rutracker 的标题常把 "[DVD9]" 写两遍（原名和译名各一次）
+    explicit = {5: 0, 9: 0}
+    mentioned = {5: False, 9: False}
     for count, layer in _DISCS.findall(title.translate(_LOOKALIKES)):
-        counts[int(layer)] += int(count) if count and int(count) > 0 else 1  # "0 DVD9" 不是 0 张盘
+        if count and int(count) > 0:  # "0 DVD9" 不是 0 张盘
+            explicit[int(layer)] += int(count)
+        else:
+            mentioned[int(layer)] = True
+    counts = {layer: explicit[layer] or int(mentioned[layer]) for layer in (5, 9)}
     discs = counts[5] + counts[9]
     if discs == 0:
         return Verdict(accepted=False, reason="标题中没有 DVD5 / DVD9")
@@ -206,8 +234,10 @@ def classify(title: str, size: int, seeders: int | None = None) -> Verdict:
     capacity = counts[9] * DVD9_MAX_BYTES + counts[5] * DVD5_MAX_BYTES
     if size > capacity:
         notes.append(f"体积超出 {kind} 的容量，可能是合集或标错了")
-    if codes := _dub_codes(title):
+    if codes := _dub_codes(title) or _voice_codes(title):
         notes.append(f"带俄语配音标记（{', '.join(codes)}），可能加过音轨，需确认是不是原盘")
+    if _looks_stripped(title):
+        notes.append("标题中的俄文像是被 Jackett 删掉了（Strip Cyrillic Letters），片名和部分过滤标记会丢失")
     if re.search(r"лицензи", title, re.IGNORECASE):
         notes.append("俄罗斯正版盘（Лицензия）")
     if re.search(r"full\s*screen|pan\s*scan", title, re.IGNORECASE):

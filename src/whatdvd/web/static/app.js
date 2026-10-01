@@ -822,7 +822,7 @@ function renderSettings(data) {
         ruTest), ruResult),
       row("搜索关键词", input("rutor.queries", v.rutor.queries.join(" ")), "多个用空格分隔"),
       row("自动搜索", number("rutor.interval", v.rutor.interval, 0, 10080), "分钟一次，只读最新的一页；0 为只手动搜索")),
-    section("Jackett", "填写地址和 API Key 即启用：在“资源”页搜索 DVD 原盘。",
+    section("Jackett", "填写地址和 API Key 即启用：在“资源”页搜索 DVD 原盘。请在 Jackett 中关掉 kinozal、rutracker 等俄语站点的“Strip Cyrillic Letters”和“Add RUS to end of all titles”：开着会删掉片名和 сжатый、Лицензия 等过滤用的标记。kinozal 的标题写“DVD-9”，搜索关键词要包含 DVD-9、DVD-5。",
       row("地址", h("span", { class: "inline" }, input("jackett.url", v.jackett.url, { placeholder: "例如 http://192.168.1.10:9117，留空不启用" }), jkTest), jkResult),
       row("API Key", secret("jackett.api_key", v.jackett.api_key_set, "Jackett 页面右上角的 API Key")),
       row("站点", h("span", {}, input("jackett.indexer", v.jackett.indexer, { list: "jackett-indexers" }), indexerList), "all 为全部已配置的站点；点“测试连接”后可以从列表中选"),

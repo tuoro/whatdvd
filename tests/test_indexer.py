@@ -150,6 +150,12 @@ def test_classify_excluded(title: str, reason: str) -> None:
         ("Film (2005) DVD9, DVD5 | Р2", "DVD9+DVD5", 2),
         ("Film (2005) 2 DVD9 1DVD5", "2×DVD9+DVD5", 3),
         ("Film (2005) 4 DVD9-FireRoke", "4×DVD9", 4),
+        # kinozal 写 "DVD-9"，数量写在前面
+        ("Life in the undergrowth - 2005  VO, Sub 2 x DVD-9", "2×DVD9", 2),
+        ("Film 2003 DUB, Sub DVD-9", "DVD9", 1),
+        # rutracker 常把盘型写两遍（原名和译名各一次），只算一张
+        ("Сериал [DVD9] S2E20-22 / Twin Peaks [1990, DVD9]", "DVD9", 1),
+        ("Film [1995, DVD9+DVD5] / Фильм [DVD9]", "DVD9+DVD5", 2),
     ],
 )
 def test_classify_disc_count(title: str, kind: str, discs: int) -> None:
@@ -174,6 +180,38 @@ def test_classify_disc_count(title: str, kind: str, discs: int) -> None:
 def test_classify_notes(title: str, note: str) -> None:
     verdict = classify(title, 1)
     assert verdict.accepted and any(note in n for n in verdict.notes), verdict.notes
+
+
+@pytest.mark.parametrize(
+    ("title", "codes"),
+    [
+        ("I Spit on Your Grave [2010, DVD9] Dub + AVO + Sub Rus, Eng + Original Eng", "Dub, AVO"),
+        ("Mallrats [1995, DVD9] 2x MVO + VO + Sub Rus, Eng", "MVO, VO"),
+        ("Duplex 2003 DUB, Sub DVD-9", "Dub"),
+        ("Heimsendir - 2011  MVO (Ozz), Sub DVD-5", "MVO"),
+    ],
+)
+def test_classify_voice_codes_rutracker_kinozal(title: str, codes: str) -> None:
+    assert f"带俄语配音标记（{codes}）" in classify(title, 1).notes[0]
+
+
+def test_classify_voice_codes_need_whole_words() -> None:
+    # "VOB"、"Volume"、"DVO" 以外的词不算
+    assert classify("Film [2001, DVD9] VOB Volume 2 Original Eng", 1).notes == []
+
+
+@pytest.mark.parametrize(
+    ("title", "stripped"),
+    [
+        ("DVD-5", True),  # 全俄文标题被删光
+        ("12 13 13 (V.Ray release) [DVD9] S2E20-22 + / Twin Peaks [1990, / / DVD9]", True),
+        ("Фильм / Film (2002) DVD9", False),
+        ("Film (2002) DVD9", False),
+    ],
+)
+def test_classify_detects_stripped_cyrillic(title: str, stripped: bool) -> None:
+    notes = classify(title, 1).notes
+    assert any("Strip Cyrillic Letters" in n for n in notes) is stripped
 
 
 def test_classify_no_dub_note_for_other_tails() -> None:

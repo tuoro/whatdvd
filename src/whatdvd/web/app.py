@@ -31,6 +31,7 @@ from ..torrent import PIECE_LENGTH_RANGE, make_torrent
 from ..upload import PIXHOST_DOMAINS, Pixhost
 from ..workflow import HostFactory, RunOptions, RunResult, check_tools, output_title, run
 from .config import (
+    JackettConfig,
     EDITABLE,
     SECRETS,
     ConfigError,
@@ -106,7 +107,7 @@ def settings_values(c: ServerConfig) -> dict[str, Any]:
             "url": jk.url if jk else "",
             "api_key_set": bool(jk and jk.api_key),
             "indexer": jk.indexer if jk else "all",
-            "queries": list(jk.queries) if jk else ["DVD9", "DVD5"],
+            "queries": list(jk.queries) if jk else list(JackettConfig.queries),
             "interval": jk.interval if jk else 60,
         },
     }
