@@ -374,3 +374,39 @@ def test_same_torrent_from_jackett_and_rutor_is_listed_once(tmp_path: Path, down
     same = Release(guid="https://d.rutor.info/download/1", indexer="RuTor", title="Film 0 DVD9", size=1,
                    published=None, details_url=None, download_url=None, magnet=None, info_hash=f"{1:040x}", seeders=1)
     assert h.watcher._ingest([same]) == 0
+
+
+def test_search_again_refreshes_existing_candidates(h: Harness, services: FakeServices) -> None:
+    """Jackett 关掉 Strip Cyrillic Letters 之后，再搜一次标题恢复完整；露出排除标记的移到已忽略。"""
+    from whatdvd.indexer import Release
+
+    def release(guid: str, title: str, seeders: int = 1) -> Release:
+        return Release(guid=guid, indexer="Kinozal (M)", title=title, size=4_000_000_000, published=None,
+                       details_url=None, download_url=None, magnet=None, info_hash=None, seeders=seeders)
+
+    assert h.watcher._ingest([release("1", "DVD-5"), release("2", "  DVD-5")]) == 2
+    first = h.watcher.store.list(["new"])[0]
+    assert any("Strip Cyrillic" in w for w in first.warnings)
+
+    assert h.watcher._ingest([release("1", "Фильм / Film 2005 DUB DVD-5", seeders=7),
+                              release("2", "Фильм / Film 2001 DVD-5-Сжатый")]) == 0
+    refreshed = {r.title: r for r in h.watcher.store.list()}
+    good = refreshed["Фильм / Film 2005 DUB DVD-5"]
+    assert good.status == "new" and good.seeders == 7
+    assert not any("Strip Cyrillic" in w for w in good.warnings) and any("Dub" in w for w in good.warnings)
+    bad = refreshed["Фильм / Film 2001 DVD-5-Сжатый"]
+    assert bad.status == "ignored" and "压缩过的盘" in (bad.error or "")
+
+
+def test_refresh_leaves_pushed_and_other_source_alone(h: Harness, services: FakeServices) -> None:
+    record_id = _first(h)
+    h.run(lambda: h.watcher.download(record_id))
+    from whatdvd.indexer import Release
+
+    record = h.watcher.store.get(record_id)
+    assert record is not None
+    same = Release(guid="1", indexer="RuTor", title="Changed DVD9", size=1, published=None, details_url=None,
+                   download_url=None, magnet=None, info_hash=None, seeders=1)
+    h.watcher._ingest([same])
+    after = h.watcher.store.get(record_id)
+    assert after is not None and after.title == record.title  # 已推送的不改

@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from ..indexer import IndexerError, Jackett, Release, classify
+from ..indexer import IndexerError, Jackett, Release, Verdict, classify
 from ..qbit import PathMap, QBittorrent, QbitError, magnet_info_hash, torrent_info_hash
 from ..rutor import SOURCE as RUTOR_SOURCE
 from ..rutor import Rutor
@@ -125,28 +125,56 @@ class Watcher:
     # ---------- 搜索 ----------
 
     def _ingest(self, releases: Sequence[Release]) -> int:
+        """写入新的候选，返回新增数。已有的候选（同一来源）用这次的结果更新标题、体积、做种数和提示，
+        例如在 Jackett 中关掉 Strip Cyrillic Letters 之后，再搜一次标题就恢复完整。"""
         added = 0
         for release in releases:
             verdict = classify(release.title, release.size, release.seeders)
+            record_id = hashlib.sha1(f"{release.indexer}\n{release.guid}".encode()).hexdigest()[:16]
+            existing = self.store.get(record_id) or (self.store.by_hash(release.info_hash) if release.info_hash else None)
+            if existing is not None:
+                if existing.source == release.indexer:
+                    self._refresh(existing, release, verdict)
+                continue
             if not verdict.accepted:
                 continue
-            record = Record(
-                id=hashlib.sha1(f"{release.indexer}\n{release.guid}".encode()).hexdigest()[:16],
-                title=release.title,
-                source=release.indexer,
-                size=release.size,
-                published=release.published,
-                details_url=release.details_url,
-                download_url=release.download_url,
-                magnet=release.magnet,
-                info_hash=release.info_hash,
-                seeders=release.seeders,
-                kind=verdict.kind,
-                discs=verdict.discs,
-                warnings=verdict.notes,
+            self.store.save(
+                Record(
+                    id=record_id,
+                    title=release.title,
+                    source=release.indexer,
+                    size=release.size,
+                    published=release.published,
+                    details_url=release.details_url,
+                    download_url=release.download_url,
+                    magnet=release.magnet,
+                    info_hash=release.info_hash,
+                    seeders=release.seeders,
+                    kind=verdict.kind,
+                    discs=verdict.discs,
+                    warnings=verdict.notes,
+                )
             )
-            added += self.store.add_new(record)
+            added += 1
         return added
+
+    def _refresh(self, record: Record, release: Release, verdict: Verdict) -> None:
+        """只更新还没推送的候选；新标题不再符合过滤条件时移到“已忽略”。"""
+        if record.status not in ("new", "ignored"):
+            return
+        changes: dict[str, Any] = {
+            "title": release.title,
+            "size": release.size or record.size,
+            "seeders": release.seeders,
+            "download_url": release.download_url or record.download_url,
+            "magnet": release.magnet or record.magnet,
+        }
+        if verdict.accepted:
+            changes.update(kind=verdict.kind, discs=verdict.discs, warnings=verdict.notes)
+        elif record.status == "new":
+            changes.update(status="ignored", error=f"重新搜索后不符合过滤条件：{verdict.reason}")
+        if any(getattr(record, key) != value for key, value in changes.items()):
+            self.store.update(record.id, **changes)
 
     def _quick_steps(self, sources: set[str]) -> list[Step]:
         """日常搜索：每个关键词只读第 1 页（最新的资源在最前面）。"""
