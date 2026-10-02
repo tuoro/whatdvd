@@ -399,3 +399,6 @@ a.card:hover { border-color: var(--line-2); background: var(--panel-2); }
 .release-filter input[type="search"] { flex: 1; min-width: 220px; max-width: 420px; }
 .release-filter .filter-count { margin-left: auto; color: var(--muted); font-size: 13px; }
 .pager { display: flex; align-items: center; justify-content: center; gap: 14px; color: var(--ink-2); }
+
+.seed-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0; color: var(--ink-2); font-size: 13.5px; }
+.seed-row code { font: 500 12.5px var(--mono); color: var(--ink); word-break: break-all; }

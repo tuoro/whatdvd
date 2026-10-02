@@ -215,3 +215,15 @@ def test_rutor_config(tmp_path: Path) -> None:
     assert config.rutor is not None and not config.rutor.films_only
     with pytest.raises(ConfigError, match="rutor.interval"):
         load_config(write(tmp_path, f'roots = ["{root}"]\ntoken = "t"\n[rutor]\nurl = "https://rutor.is"\ninterval = 3\n'))
+
+
+def test_seed_dir_and_seed_category(tmp_path: Path) -> None:
+    root = tmp_path / "media"
+    root.mkdir()
+    base = f'roots = ["{root}"]\ntoken = "t"\n'
+    config = load_config(write(tmp_path, base + 'seed_dir = "~/seed"\n[qbittorrent]\nurl = "http://qb:8080"\n'))
+    assert config.seed_dir == Path("~/seed").expanduser() and config.qbit is not None
+    assert config.qbit.seed_category == "whatdvd-seed"
+    assert load_config(write(tmp_path, base)).seed_dir is None
+    with pytest.raises(ConfigError, match="seed_category"):
+        load_config(write(tmp_path, base + '[qbittorrent]\nurl = "http://qb:8080"\nseed_category = "whatdvd"\n'))

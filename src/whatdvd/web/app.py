@@ -25,7 +25,9 @@ from ..checks import describe_extra_files, find_extra_files
 from ..indexer import IndexerError, Jackett
 from ..qbit import QBittorrent, QbitError
 from ..resolution import ASPECT_MODES
+from ..naming import clean_title
 from ..rutor import Rutor
+from ..seedlink import LinkError, check_name, link_tree, same_filesystem, target_name
 from ..store import Status, Store
 from ..torrent import PIECE_LENGTH_RANGE, make_torrent
 from ..upload import PIXHOST_DOMAINS, Pixhost
@@ -94,6 +96,7 @@ def settings_values(c: ServerConfig) -> dict[str, Any]:
             "username": qb.username if qb else "",
             "password_set": bool(qb and qb.password),
             "category": qb.category if qb else "whatdvd",
+            "seed_category": qb.seed_category if qb else "whatdvd-seed",
             "save_path": (qb.save_path or "") if qb else "",
             "path_map": dict(qb.path_map) if qb else {},
             "interval": qb.interval if qb else 60,
@@ -120,6 +123,8 @@ class RunRequest(BaseModel):
     path: str
     count: int = Field(ge=1, le=100)
     upload: bool = True
+    seed_name: str = ""
+    """发种名称（最外层文件夹或 ISO 的名字），空为原名。需要配置发种目录。"""
 
 
 class TorrentRequest(BaseModel):
@@ -127,6 +132,7 @@ class TorrentRequest(BaseModel):
     path: str
     announces: list[str] = []
     piece_length: int = Field(ge=PIECE_LENGTH_RANGE.start, le=PIECE_LENGTH_RANGE.stop - 1)
+    seed_name: str = ""
 
     @field_validator("announces")
     @classmethod
@@ -368,10 +374,23 @@ def create_app(
         response.delete_cookie(COOKIE)
         return response
 
+    def seed_dir_status(c: ServerConfig) -> dict[str, Any] | None:
+        """发种目录，以及哪些浏览目录和它不在同一个文件系统（这些目录里的盘无法建立硬链接）。"""
+        if c.seed_dir is None:
+            return None
+        try:
+            c.seed_dir.mkdir(parents=True, exist_ok=True)
+            other = [str(root) for root in c.roots if not same_filesystem(root, c.seed_dir)]
+            error = None
+        except OSError as exc:
+            other, error = [], f"无法创建发种目录：{exc}"
+        return {"path": str(c.seed_dir), "other_filesystem": other, "error": error}
+
     @app.get("/api/config", dependencies=auth)
     async def get_config() -> dict[str, Any]:
         c = cfg()
         return {
+            "seed_dir": seed_dir_status(c),
             "roots": [str(root) for root in c.roots],
             "screenshot_count": c.screenshot_count,
             "aspect": c.aspect,
@@ -386,7 +405,8 @@ def create_app(
             "max_jobs": c.max_jobs,
             "proxy": bool(c.proxy),
             "custom_template": c.template != DEFAULT_TEMPLATE,
-            "qbit": {"url": c.qbit.url, "category": c.qbit.category, "path_map": c.qbit.path_map}
+            "qbit": {"url": c.qbit.url, "category": c.qbit.category, "seed_category": c.qbit.seed_category,
+                     "path_map": c.qbit.path_map}
             if c.qbit
             else None,
             "rutor": {"url": c.rutor.url, "queries": c.rutor.queries, "interval": c.rutor.interval} if c.rutor else None,
@@ -660,7 +680,17 @@ def create_app(
         parent = None if current in cfg().roots else str(current.parent)
         return {"path": str(current), "parent": parent, "kind": _entry_kind(current), "entries": entries}
 
+    def seed_source(job: Job, reporter: JobReporter) -> Path:
+        """配置了发种目录时，先用硬链接把盘放到发种目录（可以改名），之后都处理这一份。"""
+        seed_dir = cfg().seed_dir
+        if seed_dir is None:
+            return job.path
+        target, created = link_tree(job.path, seed_dir, job.params.get("seed_name") or None)
+        reporter.info(f"{'已用硬链接放到' if created else '使用发种目录中已有的'} {target}")
+        return target
+
     def run_worker(job: Job, reporter: JobReporter) -> dict[str, Any]:
+        path = seed_source(job, reporter)
         options = RunOptions(
             output_dir=job.output_dir,
             count=job.params["count"],
@@ -670,18 +700,19 @@ def create_app(
             aspect=cfg().aspect,
             dark_filter=cfg().dark_filter,
         )
-        return _serialize_run(run(runner, job.path, options, reporter, host_factory))
+        return {**_serialize_run(run(runner, path, options, reporter, host_factory)), "seed_path": str(path)}
 
     def torrent_worker(job: Job, reporter: JobReporter) -> dict[str, Any]:
         check_tools(runner, ["mktorrent"])
-        extra = find_extra_files(job.path)
+        path = seed_source(job, reporter)
+        extra = find_extra_files(path)
         for line in describe_extra_files(extra):
             reporter.info(line)
-        reporter.info(f"开始做种：{job.path.name}（计算哈希，DVD9 可能需要几分钟）")
+        reporter.info(f"开始做种：{path.name}（计算哈希，DVD9 可能需要几分钟）")
         started = time.monotonic()
         output = make_torrent(
             runner,
-            job.path,
+            path,
             job.output_dir,
             announces=job.params["announces"],
             piece_length=job.params["piece_length"],
@@ -690,24 +721,60 @@ def create_app(
         return {
             "ok": True,
             "torrent_file": output.name,
+            "seed_path": str(path),
             "extra_files": [{"path": item.path.as_posix(), "reason": item.reason} for item in extra],
             "files": [output.name],
         }
 
-    def submit_run(path: Path, count: int | None = None, upload: bool = True) -> Job:
-        params: dict[str, Any] = {"count": count or cfg().screenshot_count, "upload": upload}
-        return manager.submit(Job("run", path, params, cfg().output_dir / output_title(path)), run_worker)
+    def job_output_dir(path: Path, seed_name: str) -> Path:
+        """输出目录按发种名称命名（没有时按原名）。"""
+        if not seed_name:
+            return cfg().output_dir / output_title(path)
+        name = target_name(path, seed_name)
+        return cfg().output_dir / clean_title(Path(name).stem if path.is_file() else name)
+
+    def submit_run(path: Path, count: int | None = None, upload: bool = True, seed_name: str = "") -> Job:
+        params: dict[str, Any] = {"count": count or cfg().screenshot_count, "upload": upload, "seed_name": seed_name}
+        return manager.submit(Job("run", path, params, job_output_dir(path, seed_name)), run_worker)
 
     @app.post("/api/jobs", dependencies=auth, status_code=201)
     async def create_job(body: JobRequest) -> dict[str, Any]:
         path = resolve_allowed(body.path)
-        output_dir = cfg().output_dir / output_title(path)
+        seed_name = body.seed_name.strip()
+        if seed_name:
+            if cfg().seed_dir is None:
+                raise HTTPException(400, "改发种名称需要先在配置文件中设置发种目录（seed_dir）")
+            try:
+                check_name(seed_name)
+            except LinkError as error:
+                raise HTTPException(400, str(error)) from None
         if isinstance(body, RunRequest):
-            job = submit_run(path, body.count, body.upload)
+            job = submit_run(path, body.count, body.upload, seed_name)
         else:
-            params: dict[str, Any] = {"announces": body.announces, "piece_length": body.piece_length}
-            job = manager.submit(Job("torrent", path, params, output_dir), torrent_worker)
+            params: dict[str, Any] = {
+                "announces": body.announces, "piece_length": body.piece_length, "seed_name": seed_name,
+            }
+            job = manager.submit(Job("torrent", path, params, job_output_dir(path, seed_name)), torrent_worker)
         return job.summary()
+
+    @app.post("/api/jobs/{job_id}/seed", dependencies=auth)
+    async def seed_job(job_id: str) -> dict[str, Any]:
+        """把做好的种子添加到 qB 做种（数据在发种目录中，跳过校验）。"""
+        job = get_job(job_id)
+        result = job.result or {}
+        if job.kind != "torrent" or job.status != "done" or not result.get("torrent_file"):
+            raise HTTPException(409, "只有完成的做种任务可以添加到 qBittorrent")
+        torrent_file = job.output_dir / result["torrent_file"]
+        data = Path(result["seed_path"])
+        if not torrent_file.is_file() or not data.exists():
+            raise HTTPException(409, "种子文件或数据已被删除")
+        try:
+            added, save_path = await get_watcher().seed(torrent_file.read_bytes(), data)
+        except WatcherError as error:
+            raise watcher_error(error) from None
+        result["seeded"] = True
+        qb = cfg().qbit
+        return {"added": added, "save_path": save_path, "category": qb.seed_category if qb else None}
 
     @app.get("/api/jobs", dependencies=auth)
     async def list_jobs() -> list[dict[str, Any]]:

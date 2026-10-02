@@ -6,6 +6,8 @@ port = 26873
 token_file = "/output/.whatdvd/token"
 roots = ["/media"]
 output_dir = "/output"
+# 发种目录（硬链接）：必须和下载目录在同一个挂载卷里，见 docker-compose.yml 中的说明
+# seed_dir = "/data/seed"
 # ISO 解包会临时写入约 1 GB 的 VOB，放在输出卷里，避免占用容器的可写层或内存
 temp_dir = "/output/.tmp"
 max_jobs = 1
@@ -44,6 +46,7 @@ piece_length = 24
 # category = "whatdvd"         # 推送时使用的分类；这个分类下下载完成的种子都会自动处理
 # save_path = ""               # qB 中的保存路径；留空用分类或 qB 的默认路径
 # interval = 60                # 检查下载进度的间隔（秒）
+# seed_category = "whatdvd-seed"  # “添加到 qB 做种”用的分类，必须和 category 不同
 # # qB 和 whatdvd 看到的路径不同时（例如不在同一台机器或同一个容器）：{ qB 中的路径 = whatdvd 中的路径 }。
 # # 映射后的下载目录必须在 roots 之内，否则不会处理。
 # path_map = { "/downloads" = "/media/qb" }

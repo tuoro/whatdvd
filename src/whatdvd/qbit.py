@@ -114,8 +114,12 @@ class QBittorrent:
         category: str,
         save_path: str | None = None,
         tags: Sequence[str] = (),
+        seeding: bool = False,
     ) -> bool:
-        """返回 False 表示 qB 中已有这个种子（5.x 返回 409）。"""
+        """返回 False 表示 qB 中已有这个种子（5.x 返回 409）。
+
+        seeding：数据已经在 save_path 中（我们自己做的种子），跳过校验直接做种；按种子原样的目录结构，
+        不让自动管理模式改掉保存路径。"""
         if (torrent is None) == (magnet is None):
             raise ValueError("torrent 和 magnet 必须且只能给一个")
         data = {"category": category}
@@ -123,6 +127,8 @@ class QBittorrent:
             data["savepath"] = save_path
         if tags:
             data["tags"] = ",".join(tags)
+        if seeding:
+            data |= {"skip_checking": "true", "contentLayout": "Original", "autoTMM": "false"}
         files = None
         if torrent is not None:
             files = {"torrents": ("whatdvd.torrent", torrent, "application/x-bittorrent")}
@@ -225,3 +231,12 @@ class PathMap:
             if path == base or base in path.parents:
                 return Path(local) / path.relative_to(base)
         return Path(remote)
+
+    def to_remote(self, local: Path) -> str:
+        """whatdvd 看到的路径 → qB 中的路径。"""
+        path = PurePosixPath(local.as_posix())
+        for remote, prefix in sorted(self.pairs, key=lambda pair: len(pair[1]), reverse=True):
+            base = PurePosixPath(prefix)
+            if path == base or base in path.parents:
+                return str(PurePosixPath(remote) / path.relative_to(base))
+        return str(path)

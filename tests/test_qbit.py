@@ -169,3 +169,10 @@ def test_magnet_info_hash() -> None:
 def test_path_map(remote: str, local: str) -> None:
     mapping = PathMap((("/downloads", "/media/qb"), ("/downloads/dvd", "/srv/dvd")))
     assert mapping.to_local(remote) == Path(local)
+
+
+def test_path_map_to_remote() -> None:
+    mapping = PathMap((("/downloads", "/media/qb"), ("/seed", "/media/qb/seed")))
+    assert mapping.to_remote(Path("/media/qb/seed/Film")) == "/seed/Film"  # 最长前缀优先
+    assert mapping.to_remote(Path("/media/qb/Film")) == "/downloads/Film"
+    assert mapping.to_remote(Path("/other/Film")) == "/other/Film"

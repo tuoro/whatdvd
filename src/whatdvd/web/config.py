@@ -44,6 +44,8 @@ class QbitConfig:
     """qB 中的路径 → whatdvd 看到的路径。"""
     interval: int = 60
     """检查下载进度的间隔（秒）。"""
+    seed_category: str = "whatdvd-seed"
+    """“添加到 qB 做种”用的分类。必须和 category 不同：category 中下载完成的种子会被自动处理。"""
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,8 @@ class ServerConfig:
     """允许在界面中浏览和处理的目录（已解析符号链接）。"""
     output_dir: Path
     token: str
+    seed_dir: Path | None = None
+    """发种目录：处理前用硬链接把盘放到这里，可以另起名字（必须和下载目录在同一个文件系统）。"""
     token_source: str = "config"
     """config（配置文件）、env（环境变量）、file（之前保存的）、new（这次新生成并保存的）。"""
     token_file: Path | None = None
@@ -115,6 +119,7 @@ _SCHEMA: dict[tuple[str, str], type | tuple[type, ...]] = {
     ("", "token_file"): str,
     ("", "roots"): list,
     ("", "output_dir"): str,
+    ("", "seed_dir"): str,
     ("", "temp_dir"): str,
     ("", "max_jobs"): int,
     ("screenshots", "count"): int,
@@ -132,6 +137,7 @@ _SCHEMA: dict[tuple[str, str], type | tuple[type, ...]] = {
     ("qbittorrent", "username"): str,
     ("qbittorrent", "password"): str,
     ("qbittorrent", "category"): str,
+    ("qbittorrent", "seed_category"): str,
     ("qbittorrent", "save_path"): str,
     ("qbittorrent", "path_map"): dict,
     ("qbittorrent", "interval"): int,
@@ -310,6 +316,9 @@ def _qbit_config(flat: dict[tuple[str, str], Any]) -> QbitConfig | None:
     category = flat.get(("qbittorrent", "category"), "whatdvd").strip()
     if not category:
         raise ConfigError("qbittorrent.category 不能为空")
+    seed_category = flat.get(("qbittorrent", "seed_category"), "whatdvd-seed").strip()
+    if not seed_category or seed_category == category:
+        raise ConfigError("qbittorrent.seed_category 不能为空，也不能和 category 相同（category 中的种子下载完会被自动处理）")
     return QbitConfig(
         url=_http_url(url, "qbittorrent.url"),
         username=flat.get(("qbittorrent", "username"), ""),
@@ -318,6 +327,7 @@ def _qbit_config(flat: dict[tuple[str, str], Any]) -> QbitConfig | None:
         save_path=flat.get(("qbittorrent", "save_path"), "").strip() or None,
         path_map=tuple((remote.rstrip("/") or "/", local.rstrip("/") or "/") for remote, local in path_map.items()),
         interval=interval,
+        seed_category=seed_category,
     )
 
 
@@ -429,7 +439,9 @@ def load_config(
         raise ConfigError(f"max_jobs 不能超过 {max_jobs_limit}")
 
     temp_dir = flat.get(("", "temp_dir"))
+    seed_dir = flat.get(("", "seed_dir"), "").strip()
     return ServerConfig(
+        seed_dir=_expand(seed_dir).absolute() if seed_dir else None,
         config_file=file,
         settings_file=settings_file,
         overridden=frozenset(key_name(key) for key in overrides),

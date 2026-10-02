@@ -366,20 +366,23 @@ function readOptions() {
   const upload = $("opt-upload") ? $("opt-upload").checked : state.opts.upload;
   const tracker = $("opt-tracker") ? $("opt-tracker").value : state.opts.tracker;
   const piece = Number($("opt-piece")?.value || state.opts.piece);
-  state.opts = { count, upload, tracker, piece };
+  const seedName = $("opt-seedname") ? $("opt-seedname").value.trim() : "";
+  state.opts = { count, upload, tracker, piece, seedName };
   return state.opts;
 }
 
-function jobBodies(kind, path) {
+function jobBodies(kind, path, single) {
   const opts = state.opts;
-  const run = { kind: "run", path, count: opts.count, upload: opts.upload };
-  const torrent = { kind: "torrent", path, announces: opts.tracker.split(/\s+/).filter(Boolean), piece_length: opts.piece };
+  // 发种名称只用于单个来源：批量提交时各自用原名
+  const seed_name = single ? opts.seedName || "" : "";
+  const run = { kind: "run", path, count: opts.count, upload: opts.upload, seed_name };
+  const torrent = { kind: "torrent", path, announces: opts.tracker.split(/\s+/).filter(Boolean), piece_length: opts.piece, seed_name };
   return kind === "both" ? [run, torrent] : kind === "run" ? [run] : [torrent];
 }
 
 async function submit(kind, paths) {
   readOptions();
-  const bodies = paths.flatMap((path) => jobBodies(kind, path));
+  const bodies = paths.flatMap((path) => jobBodies(kind, path, paths.length === 1));
   let first = null;
   try {
     for (const body of bodies) {
@@ -435,7 +438,21 @@ function optionsRow() {
     h("label", {}, "截图", h("input", { id: "opt-count", type: "number", min: 1, max: 100, value: o.count }), h("span", { class: "hint" }, "张/盘")),
     h("label", { class: "switch" }, h("input", { id: "opt-upload", type: "checkbox", checked: o.upload }), h("span", { class: "track" }), "上传 Pixhost 并生成发布说明"),
     h("label", {}, "Tracker", h("input", { id: "opt-tracker", type: "text", value: o.tracker, placeholder: "可留空，多个用空格分隔", spellcheck: "false" })),
-    h("label", {}, "分块", h("select", { id: "opt-piece" }, pieces)));
+    h("label", {}, "分块", h("select", { id: "opt-piece" }, pieces)),
+    state.config.seed_dir ? h("label", { class: "wide", title: `用硬链接放到发种目录 ${state.config.seed_dir.path}，原始下载不动` },
+      "发种名称", h("input", { id: "opt-seedname", type: "text", value: "", placeholder: "留空用原名；例如 IMDb 片名和年份", spellcheck: "false" }),
+      h("span", { class: "hint" }, "最外层文件夹名")) : null);
+}
+
+// 来源所在的浏览目录和发种目录不在同一个文件系统时，无法建立硬链接
+function seedDirProblem(path) {
+  const seed = state.config.seed_dir;
+  if (!seed) return null;
+  if (seed.error) return seed.error;
+  const root = rootOf(path);
+  return root && seed.other_filesystem.includes(root)
+    ? `${root} 和发种目录 ${seed.path} 不在同一个文件系统（或分属不同的挂载卷），无法建立硬链接，处理和做种会失败。请把发种目录设在同一个分区上；Docker 中两者要在同一个挂载卷里。`
+    : null;
 }
 
 function setMain(...nodes) {
@@ -497,6 +514,8 @@ async function showSource(path) {
     h("button", { type: "button", class: "btn glass", disabled: !hasDiscs, onclick: () => submit("both", [path]) }, "两者都做"));
 
   const sections = [];
+  const seedProblem = seedDirProblem(path);
+  if (seedProblem) sections.push(notice("bad", seedProblem));
   if (hasDiscs) {
     sections.push(h("section", {}, h("h2", { class: "section-title" }, "包含的盘"),
       h("div", { class: "cards" }, info.discs.map((d) =>
@@ -624,6 +643,30 @@ async function showJob(id, tab) {
   }
 }
 
+// 做种的数据在哪里，以及“添加到 qB 做种”
+function seedRow(job, result) {
+  const qb = state.config.qbit;
+  const linked = state.config.seed_dir && result.seed_path.startsWith(`${state.config.seed_dir.path}/`);
+  const where = h("span", {}, `${linked ? "发种目录" : "原始下载"}：`, h("code", { class: "path" }, result.seed_path));
+  if (!qb) return h("p", { class: "seed-row" }, where, h("span", { class: "hint" }, "配置 qBittorrent 后可以一键添加做种"));
+  const button = h("button", { type: "button", class: "btn glass", disabled: !!result.seeded },
+    result.seeded ? "已添加到 qBittorrent" : "添加到 qB 做种");
+  button.title = `添加到分类 ${qb.seed_category}，跳过校验直接做种`;
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      const r = await api(`/api/jobs/${job.id}/seed`, { method: "POST" });
+      result.seeded = true;
+      button.textContent = "已添加到 qBittorrent";
+      toast(r.added ? `已添加到 qBittorrent（分类 ${r.category}，保存路径 ${r.save_path}）` : "qBittorrent 中已有这个种子");
+    } catch (error) {
+      button.disabled = false;
+      if (!(error instanceof AuthError)) toast(error.message);
+    }
+  });
+  return h("p", { class: "seed-row" }, where, button);
+}
+
 function renderResult(job) {
   const nodes = [];
   if (job.status === "failed") nodes.push(notice("bad", job.error || "任务失败"));
@@ -636,6 +679,7 @@ function renderResult(job) {
       h("div", { class: "t" }, h("b", {}, result.torrent_file),
         h("span", {}, `private · 分块 ${pieceLabel(job.params.piece_length)} · ${n ? `${n} 个 Tracker` : "未填写 Tracker"}`)),
       h("a", { class: "btn amber", href: fileUrl(job, result.torrent_file), download: result.torrent_file }, icon("down"), "下载种子")));
+    if (result.seed_path) nodes.push(seedRow(job, result));
     const extra = result.extra_files || [];
     if (extra.length) {
       nodes.push(notice("warn", h("div", {},
@@ -650,6 +694,9 @@ function renderResult(job) {
     h("span", {}, h("b", {}, result.discs.length), " 张盘"),
     h("span", {}, "截图 ", h("b", {}, `${shots.filter((s) => s.ok).length} / ${shots.length}`)),
     job.params.upload ? h("span", {}, "已上传 ", h("b", {}, shots.filter((s) => s.url).length), " 张") : h("span", {}, "未上传图床")));
+  if (result.seed_path && state.config.seed_dir && result.seed_path.startsWith(`${state.config.seed_dir.path}/`)) {
+    nodes.push(h("p", { class: "seed-row" }, "发种目录：", h("code", { class: "path" }, result.seed_path)));
+  }
 
   if (result.post) {
     nodes.push(h("section", { class: "code" },
@@ -816,7 +863,9 @@ function renderSettings(data) {
       row("地址", h("span", { class: "inline" }, input("qbittorrent.url", v.qbittorrent.url, { placeholder: "例如 http://192.168.1.10:8080，留空不启用" }), qbTest), qbResult),
       row("用户名", input("qbittorrent.username", v.qbittorrent.username, { autocomplete: "off" })),
       row("密码", secret("qbittorrent.password", v.qbittorrent.password_set, "")),
-      row("分类", input("qbittorrent.category", v.qbittorrent.category)),
+      row("分类", input("qbittorrent.category", v.qbittorrent.category), "这个分类中下载完成的种子会被自动处理"),
+      row("做种分类", input("qbittorrent.seed_category", v.qbittorrent.seed_category),
+        `“添加到 qB 做种”用的分类，必须和上面的分类不同。发种目录：${state.config.seed_dir ? state.config.seed_dir.path : "未设置（在配置文件中设置 seed_dir）"}`),
       row("保存路径", input("qbittorrent.save_path", v.qbittorrent.save_path, { placeholder: "qB 中的路径；留空用分类或 qB 的默认路径" })),
       row("路径映射", area("qbittorrent.path_map", pathMap, 2, "/downloads = /media/qb"),
         `${PATH_MAP_HINT}。两边看到的路径一样时留空。映射后的目录必须在允许浏览的目录内。`),
@@ -910,6 +959,7 @@ function collectSettings(ctl, v, pathMapText) {
   const password = secretValue(ctl, "qbittorrent.password");
   if (password !== null) put("qbittorrent", "password", password, undefined);
   put("qbittorrent", "category", ctl["qbittorrent.category"].value.trim(), q.category);
+  put("qbittorrent", "seed_category", ctl["qbittorrent.seed_category"].value.trim(), q.seed_category);
   put("qbittorrent", "save_path", ctl["qbittorrent.save_path"].value.trim(), q.save_path);
   if (ctl["qbittorrent.path_map"].value.trim() !== pathMapText.trim()) {
     const map = {};

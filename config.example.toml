@@ -16,6 +16,10 @@ roots = ["~/downloads"]
 # 截图、MediaInfo、发布说明和种子的输出目录，每个任务在其中按名称建子目录
 output_dir = "~/.local/share/whatdvd/output"
 
+# 发种目录：处理和做种前用硬链接把盘放到这里，可以另起最外层的名字，原始下载不动。
+# 必须和下载目录在同一个文件系统（同一个挂载点下）；留空不使用，直接处理原始下载
+seed_dir = ""
+
 # ISO 解包用的临时目录；留空用系统临时目录。解包会写入约 1 GB 的 VOB，/tmp 空间小时请指定
 temp_dir = ""
 
@@ -61,6 +65,7 @@ template = ""           # 发布说明模板文件；留空用默认 BBCode。�
 # category = "whatdvd"         # 推送时使用的分类；这个分类下下载完成的种子都会自动处理
 # save_path = ""               # qB 中的保存路径；留空用分类或 qB 的默认路径
 # interval = 60                # 检查下载进度的间隔（秒）
+# seed_category = "whatdvd-seed"  # “添加到 qB 做种”用的分类，必须和 category 不同
 # # qB 和 whatdvd 看到的路径不同时（例如不在同一台机器或同一个容器）：{ qB 中的路径 = whatdvd 中的路径 }。
 # # 映射后的下载目录必须在 roots 之内，否则不会处理。
 # path_map = { "/downloads" = "/home/me/downloads" }

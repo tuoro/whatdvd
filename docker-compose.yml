@@ -20,6 +20,10 @@ services:
       # 使用资源获取时，把 qB 的下载目录也挂载进来，并在配置里设置 path_map，例如：
       # - /path/to/qb/downloads:/media/qb:ro
       - ./output:/output
+      # 使用发种目录（硬链接）时：下载目录和发种目录必须在同一个挂载卷里（分开挂载无法建硬链接），
+      # 而且要可写。可以挂载它们共同的上级目录，代替上面的 /media，再在配置中设置
+      # roots = ["/data/downloads"]、seed_dir = "/data/seed"：
+      # - /path/to/data:/data
       # 需要改配置时再挂载自己的文件：
       # - ./config.toml:/config/config.toml:ro
     read_only: true

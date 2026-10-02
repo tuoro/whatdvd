@@ -351,6 +351,24 @@ class Watcher:
         except (IndexerError, QbitError) as error:
             raise WatcherError(str(error)) from None
 
+    def _seed(self, torrent: bytes, data: Path) -> tuple[bool, str]:
+        assert self.qbit is not None and self.config.qbit is not None
+        category = self.config.qbit.seed_category
+        save_path = self._path_map.to_remote(data.parent)
+        self.qbit.ensure_category(category)
+        added = self.qbit.add(torrent=torrent, category=category, save_path=save_path, tags=["whatdvd-seed"], seeding=True)
+        return added, save_path
+
+    async def seed(self, torrent: bytes, data: Path) -> tuple[bool, str]:
+        """把我们做的种子添加到 qB 做种：数据就在 data（发种目录中的盘），跳过校验。
+        用单独的分类，不会被当成新下载再处理一遍。返回（是否新添加，qB 中的保存路径）。"""
+        if self.qbit is None:
+            raise WatcherError("没有配置 qBittorrent")
+        try:
+            return await asyncio.to_thread(self._seed, torrent, data)
+        except QbitError as error:
+            raise WatcherError(str(error)) from None
+
     # ---------- 跟踪下载、自动处理 ----------
 
     def _allowed(self, path: Path) -> Path | None:

@@ -153,7 +153,7 @@ def test_torrent_job_and_download(authed: TestClient, media: Path, tmp_path: Pat
     assert response.status_code == 201
     job = wait_job(authed, response.json()["id"])
     assert job["status"] == "done" and job["ok"] is True
-    assert job["params"] == {"announces": ["https://t.example/a"], "piece_length": 22}
+    assert job["params"] == {"announces": ["https://t.example/a"], "piece_length": 22, "seed_name": ""}
     assert job["result"]["torrent_file"] == "Movie.A.torrent"
     assert any("种子：Movie.A.torrent" in e["message"] for e in job["events"])
     assert (tmp_path / "out" / "Movie.A" / "Movie.A.torrent").is_file()
@@ -344,6 +344,77 @@ def test_releases_flow(tmp_path: Path, media: Path) -> None:
         assert client.post("/api/releases/missing/download").status_code == 404
         assert client.post(f"/api/releases/{second}/reprocess").status_code == 409
     assert TestClient(app).get("/api/releases").status_code == 401  # 需要登录
+
+
+def test_seed_dir_rename_torrent_and_add_to_qbit(tmp_path: Path, media: Path) -> None:
+    """发种目录：硬链接改名后做种，再添加到 qB 做种（单独的分类，跳过校验）。"""
+    import os
+
+    from test_watcher import FakeServices
+
+    from whatdvd.qbit import QBittorrent
+    from whatdvd.web.config import QbitConfig
+
+    services = FakeServices()
+    seed_dir = tmp_path / "seed"
+    config = ServerConfig(
+        roots=(media.resolve(),),
+        output_dir=tmp_path / "out",
+        token=TOKEN,
+        database=tmp_path / "state.db",
+        seed_dir=seed_dir,
+        qbit=QbitConfig("http://qb:8080", "admin", "pw", path_map=(("/data", str(tmp_path)),)),
+    )
+    app = create_app(
+        config,
+        runner=FakeRunner(fake_mktorrent, available=["mktorrent"]),
+        qbit=QBittorrent("http://qb:8080", "admin", "pw", transport=httpx.MockTransport(services)),
+        background=False,
+    )
+    with TestClient(app, headers={"Authorization": f"Bearer {TOKEN}"}) as client:
+        status = client.get("/api/config").json()["seed_dir"]
+        assert status == {"path": str(seed_dir), "other_filesystem": [], "error": None}
+
+        body = {"kind": "torrent", "path": str(media / "Movie A"), "piece_length": 24, "seed_name": "The Film (1985)"}
+        job = wait_job(client, client.post("/api/jobs", json=body).json()["id"])
+        assert job["status"] == "done", job["events"]
+        linked = seed_dir / "The Film (1985)"
+        assert job["result"]["seed_path"] == str(linked)
+        assert os.path.samefile(linked / "VIDEO_TS" / "VTS_01_1.VOB", media / "Movie A" / "VIDEO_TS" / "VTS_01_1.VOB")
+        assert (media / "Movie A").is_dir()  # 原始下载不动
+        assert job["result"]["torrent_file"] == "The.Film.1985.torrent"
+        assert (tmp_path / "out" / "The.Film.1985" / "The.Film.1985.torrent").is_file()
+
+        seeded = client.post(f"/api/jobs/{job['id']}/seed")
+        assert seeded.status_code == 200, seeded.text
+        assert seeded.json() == {"added": True, "save_path": "/data/seed", "category": "whatdvd-seed"}
+        sent = services.added[-1].decode()
+        for field in ("whatdvd-seed", "/data/seed", "skip_checking", "Original", "autoTMM"):
+            assert field in sent
+        assert services.categories[-1] == "category=whatdvd-seed&savePath="
+
+        # ISO 补上扩展名，和同名文件夹不冲突
+        body = {"kind": "torrent", "path": str(media / "Movie B.iso"), "piece_length": 24, "seed_name": "The Film (1985)"}
+        iso = wait_job(client, client.post("/api/jobs", json=body).json()["id"])
+        assert iso["status"] == "done" and iso["result"]["seed_path"] == str(seed_dir / "The Film (1985).iso")
+
+        # 同名但不是同一份数据：任务失败，不覆盖
+        body = {"kind": "torrent", "path": str(media / "Plain"), "piece_length": 24, "seed_name": "The Film (1985)"}
+        conflict = wait_job(client, client.post("/api/jobs", json=body).json()["id"])
+        assert conflict["status"] == "failed" and "不是同一份数据" in conflict["error"]
+        assert (linked / "VIDEO_TS" / "VTS_01_1.VOB").exists()
+
+        bad = {"kind": "torrent", "path": str(media / "Movie A"), "piece_length": 24, "seed_name": "a/b"}
+        assert client.post("/api/jobs", json=bad).status_code == 400
+
+
+def test_seed_name_requires_seed_dir(authed: TestClient, media: Path) -> None:
+    body = {"kind": "torrent", "path": str(media / "Movie A"), "piece_length": 24, "seed_name": "Film"}
+    response = authed.post("/api/jobs", json=body)
+    assert response.status_code == 400 and "seed_dir" in response.json()["detail"]
+    job = wait_job(authed, authed.post("/api/jobs", json={**body, "seed_name": ""}).json()["id"])
+    assert job["result"]["seed_path"] == str((media / "Movie A").resolve())  # 没有发种目录时用原始下载
+    assert authed.post(f"/api/jobs/{job['id']}/seed").status_code == 404  # 没有配置 qBittorrent
 
 
 # ---------- 设置页面 ----------
