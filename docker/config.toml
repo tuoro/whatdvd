@@ -51,6 +51,9 @@ piece_length = 24
 # # 映射后的下载目录必须在 roots 之内，否则不会处理。
 # path_map = { "/downloads" = "/media/qb" }
 
+# [tmdb]                       # 查片名：按 IMDb / TMDB 的英文名和原名给出 PTP 发种名称和 BHD 标题
+# api_key = ""                 # themoviedb.org 的 API Key 或读取令牌；也可以用环境变量 WHATDVD_TMDB_API_KEY
+
 # [jackett]
 # url = "http://127.0.0.1:9117"
 # api_key = ""                 # Jackett 页面右上角的 API Key；也可以用环境变量 WHATDVD_JACKETT_API_KEY

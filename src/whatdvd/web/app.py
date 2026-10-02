@@ -26,9 +26,11 @@ from ..indexer import IndexerError, Jackett
 from ..qbit import QBittorrent, QbitError
 from ..resolution import ASPECT_MODES
 from ..naming import clean_title
+from ..release_names import audio_from_mediainfo, bhd_title, disc_kind, guess_query, ptp_name
 from ..rutor import Rutor
 from ..seedlink import LinkError, check_name, link_tree, same_filesystem, target_name
 from ..store import Status, Store
+from ..tmdb import Tmdb, TmdbError
 from ..torrent import PIECE_LENGTH_RANGE, make_torrent
 from ..upload import PIXHOST_DOMAINS, Pixhost
 from ..workflow import HostFactory, RunOptions, RunResult, check_tools, output_title, run
@@ -75,6 +77,11 @@ class RutorTest(BaseModel):
     url: str
 
 
+class TmdbTest(BaseModel):
+    api_key: str | None = None
+    """None 表示用已保存的 API Key。"""
+
+
 class JackettTest(BaseModel):
     url: str
     api_key: str | None = None
@@ -115,7 +122,19 @@ def settings_values(c: ServerConfig) -> dict[str, Any]:
             "interval": jk.interval if jk else 60,
             "films_only": jk.films_only if jk else True,
         },
+        "tmdb": {"api_key_set": bool(c.tmdb_api_key)},
     }
+
+
+class TitleChoice(BaseModel):
+    """在来源页从 TMDB 选中的片名。"""
+
+    title: str = Field(min_length=1, max_length=300)
+    original_title: str = Field("", max_length=300)
+    original_language: str = Field("", max_length=10)
+    year: int | None = Field(None, ge=1870, le=2100)
+    imdb_id: str | None = Field(None, pattern=r"^tt\d{5,10}$")
+    tmdb_url: str | None = Field(None, pattern=r"^https://www\.themoviedb\.org/(movie|tv)/\d+$")
 
 
 class RunRequest(BaseModel):
@@ -125,6 +144,10 @@ class RunRequest(BaseModel):
     upload: bool = True
     seed_name: str = ""
     """发种名称（最外层文件夹或 ISO 的名字），空为原名。需要配置发种目录。"""
+    title: TitleChoice | None = None
+    region: str = Field("", max_length=60)
+    """BHD 标题中的地区或发行商，例如 RUS、Criterion Collection。"""
+    edition: str = Field("", max_length=60)
 
 
 class TorrentRequest(BaseModel):
@@ -175,6 +198,31 @@ def _disc_summary(source: Path) -> dict[str, Any]:
         "bytes": size,
         "media_type": "DVD5" if size <= DVD5_MAX_BYTES else "DVD9",
     }
+
+
+def _site_names(result: RunResult, params: dict[str, Any]) -> dict[str, Any] | None:
+    """选了片名时给出 BHD 标题：制式和盘型来自识别结果，音轨来自 VOB 的 MediaInfo。"""
+    chosen = params.get("title")
+    analyzed = [d for d in result.discs if d.analysis is not None]
+    if not chosen or not analyzed:
+        return None
+    first = analyzed[0]
+    assert first.analysis is not None
+    audio = None
+    if first.output is not None and first.output.mediainfo.is_file():
+        audio = audio_from_mediainfo(first.output.mediainfo.read_text(encoding="utf-8"))
+    bhd = bhd_title(
+        title=chosen["title"],
+        original_title=chosen.get("original_title", ""),
+        original_language=chosen.get("original_language", ""),
+        year=chosen.get("year"),
+        standard=first.analysis.standard,
+        kind=disc_kind([d.analysis.disc.media_type for d in analyzed if d.analysis is not None]),
+        audio=audio,
+        region=params.get("region", ""),
+        edition=params.get("edition", ""),
+    )
+    return {"bhd": bhd, "audio": audio, "imdb_id": chosen.get("imdb_id"), "tmdb_url": chosen.get("tmdb_url")}
 
 
 def _serialize_run(result: RunResult) -> dict[str, Any]:
@@ -235,6 +283,7 @@ def create_app(
     qbit: QBittorrent | None = None,
     jackett: Jackett | None = None,
     rutor: Rutor | None = None,
+    tmdb_factory: Callable[[str], Tmdb] = Tmdb,
     background: bool = True,
 ) -> FastAPI:
     """qbit / jackett 不传时按配置创建；background=False 时不启动后台轮询（测试用）。
@@ -525,6 +574,20 @@ def create_app(
             client.close()
         return {"total": total, "page": len(releases)}
 
+    @app.post("/api/settings/test/tmdb", dependencies=auth)
+    async def test_tmdb(body: TmdbTest) -> dict[str, Any]:
+        api_key = (body.api_key if body.api_key is not None else cfg().tmdb_api_key).strip()
+        if not api_key:
+            raise HTTPException(400, "请填写 TMDB API Key")
+        client = tmdb_factory(api_key)
+        try:
+            await asyncio.to_thread(client.check)
+        except TmdbError as error:
+            raise HTTPException(400, str(error)) from None
+        finally:
+            client.close()
+        return {"ok": True}
+
     @app.post("/api/settings/test/jackett", dependencies=auth)
     async def test_jackett(body: JackettTest) -> dict[str, Any]:
         c = cfg()
@@ -646,13 +709,57 @@ def create_app(
         except ScanError:
             sources = []
         discs = [_disc_summary(item) for item in sources]
+        # 从资源页下载来的，用种子标题猜片名（常带英文名和年份）；否则用文件夹名
+        record = watcher.store.by_local_path(str(target)) if watcher is not None else None
+        query, year = guess_query(record.title if record else (target.stem if target.is_file() else target.name))
         return {
             "path": str(target),
             "name": target.name,
             "kind": _entry_kind(target) or "dir",
             "discs": discs,
             "total_bytes": sum(d["bytes"] for d in discs),
+            "disc_kind": disc_kind([d["media_type"] for d in discs]),
+            "guess": {"query": query, "year": year, "from": "release" if record else "name"},
+            "tmdb": bool(cfg().tmdb_api_key),
         }
+
+    def tmdb_client() -> Tmdb:
+        key = cfg().tmdb_api_key
+        if not key:
+            raise HTTPException(400, "请先在设置页面填写 TMDB API Key")
+        return tmdb_factory(key)
+
+    @app.get("/api/tmdb/search", dependencies=auth)
+    async def tmdb_search(q: str, year: int | None = None) -> dict[str, Any]:
+        if not q.strip():
+            raise HTTPException(400, "请填写片名")
+        client = tmdb_client()
+        try:
+            matches = await asyncio.to_thread(client.search, q.strip(), year)
+            if not matches and year:  # 年份对不上时（例如按发行年份标的）不限年份再搜一次
+                matches = await asyncio.to_thread(client.search, q.strip(), None)
+        except TmdbError as error:
+            raise HTTPException(502, str(error)) from None
+        finally:
+            client.close()
+        return {"results": [m.public() for m in matches]}
+
+    @app.get("/api/tmdb/{kind}/{tmdb_id}", dependencies=auth)
+    async def tmdb_details(kind: Literal["movie", "tv"], tmdb_id: int, disc: str = "") -> dict[str, Any]:
+        """详情和按站点规则给出的名字。disc 为盘型（例如 DVD9、2xDVD9）。"""
+        client = tmdb_client()
+        try:
+            match = await asyncio.to_thread(client.details, kind, tmdb_id)
+        except TmdbError as error:
+            raise HTTPException(502, str(error)) from None
+        finally:
+            client.close()
+        # BHD 标题的开头（片名、AKA、年份）；地区、制式、音轨在界面和截图任务中补上
+        head = bhd_title(
+            title=match.title, original_title=match.original_title, original_language=match.original_language,
+            year=match.year, standard=None, kind="", audio=None,
+        ).removesuffix(" MPEG-2")
+        return {**match.public(), "ptp_name": ptp_name(match.title, match.year, disc), "bhd_head": head}
 
     @app.get("/api/browse", dependencies=auth)
     async def browse(path: str | None = None) -> dict[str, Any]:
@@ -700,7 +807,11 @@ def create_app(
             aspect=cfg().aspect,
             dark_filter=cfg().dark_filter,
         )
-        return {**_serialize_run(run(runner, path, options, reporter, host_factory)), "seed_path": str(path)}
+        result = run(runner, path, options, reporter, host_factory)
+        names = _site_names(result, job.params)
+        if names:
+            reporter.info(f"BHD 标题：{names['bhd']}")
+        return {**_serialize_run(result), "seed_path": str(path), "names": names}
 
     def torrent_worker(job: Job, reporter: JobReporter) -> dict[str, Any]:
         check_tools(runner, ["mktorrent"])
@@ -733,8 +844,12 @@ def create_app(
         name = target_name(path, seed_name)
         return cfg().output_dir / clean_title(Path(name).stem if path.is_file() else name)
 
-    def submit_run(path: Path, count: int | None = None, upload: bool = True, seed_name: str = "") -> Job:
-        params: dict[str, Any] = {"count": count or cfg().screenshot_count, "upload": upload, "seed_name": seed_name}
+    def submit_run(
+        path: Path, count: int | None = None, upload: bool = True, seed_name: str = "", extra: dict[str, Any] | None = None
+    ) -> Job:
+        params: dict[str, Any] = {
+            "count": count or cfg().screenshot_count, "upload": upload, "seed_name": seed_name, **(extra or {}),
+        }
         return manager.submit(Job("run", path, params, job_output_dir(path, seed_name)), run_worker)
 
     @app.post("/api/jobs", dependencies=auth, status_code=201)
@@ -749,7 +864,10 @@ def create_app(
             except LinkError as error:
                 raise HTTPException(400, str(error)) from None
         if isinstance(body, RunRequest):
-            job = submit_run(path, body.count, body.upload, seed_name)
+            extra: dict[str, Any] = {}
+            if body.title is not None:
+                extra = {"title": body.title.model_dump(), "region": body.region.strip(), "edition": body.edition.strip()}
+            job = submit_run(path, body.count, body.upload, seed_name, extra)
         else:
             params: dict[str, Any] = {
                 "announces": body.announces, "piece_length": body.piece_length, "seed_name": seed_name,

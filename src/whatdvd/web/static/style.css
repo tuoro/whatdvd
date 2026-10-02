@@ -402,3 +402,24 @@ a.card:hover { border-color: var(--line-2); background: var(--panel-2); }
 
 .seed-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin: 0; color: var(--ink-2); font-size: 13.5px; }
 .seed-row code { font: 500 12.5px var(--mono); color: var(--ink); word-break: break-all; }
+.title-search { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.title-search input[type="search"] { flex: 1; min-width: 220px; max-width: 420px; }
+.title-search input[type="number"] { width: 90px; }
+.title-search input, .title-chosen dd input {
+  padding: 7px 10px; border: 1px solid var(--line-2); border-radius: 8px; background: var(--panel-2); color: var(--ink); font: inherit;
+}
+.title-search .hint, .title-results .hint, .title-chosen .hint { color: var(--muted); font-size: 12.5px; }
+.title-results { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.title-option { display: grid; gap: 2px; text-align: left; padding: 8px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel-2); color: var(--ink); cursor: pointer; font: inherit; font-size: 13px; }
+.title-option span { color: var(--muted); font-size: 12px; }
+.title-option:hover, .title-option:focus-visible { border-color: var(--amber); }
+.title-chosen { margin-top: 14px; padding: 14px 16px; border-radius: 12px; background: var(--panel); display: grid; gap: 10px; font-size: 13.5px; }
+.title-chosen p { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.title-chosen a { color: var(--amber); }
+.title-chosen dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; align-items: center; }
+.title-chosen dt { color: var(--muted); }
+.title-chosen dd { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.title-chosen dd input { min-width: 220px; }
+.title-chosen code { font: 500 12.5px var(--mono); color: var(--ink); word-break: break-all; }
+.title-chosen > button { justify-self: start; }
+@media (max-width: 640px) { .title-chosen dl { grid-template-columns: 1fr; } }

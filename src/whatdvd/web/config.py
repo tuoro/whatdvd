@@ -24,6 +24,7 @@ DEFAULT_DATABASE = Path("~/.local/share/whatdvd/whatdvd.db")
 DEFAULT_SETTINGS_FILE = Path("~/.local/share/whatdvd/settings.json")
 QB_PASSWORD_ENV = "WHATDVD_QB_PASSWORD"
 JACKETT_KEY_ENV = "WHATDVD_JACKETT_API_KEY"
+TMDB_KEY_ENV = "WHATDVD_TMDB_API_KEY"
 DEFAULT_PORT = 26873
 TOKEN_ENV = "WHATDVD_TOKEN"
 
@@ -101,6 +102,8 @@ class ServerConfig:
     qbit: QbitConfig | None = None
     jackett: JackettConfig | None = None
     rutor: RutorConfig | None = None
+    tmdb_api_key: str = ""
+    """TMDB 的 API Key（v3）或读取令牌（v4），用来查片名；空为不使用。"""
     config_file: Path | None = None
     """读取的配置文件；没有时为 None。"""
     settings_file: Path = DEFAULT_SETTINGS_FILE
@@ -151,6 +154,7 @@ _SCHEMA: dict[tuple[str, str], type | tuple[type, ...]] = {
     ("rutor", "queries"): list,
     ("rutor", "interval"): int,
     ("rutor", "films_only"): bool,
+    ("tmdb", "api_key"): str,
 }
 
 
@@ -161,10 +165,12 @@ EDITABLE: frozenset[tuple[str, str]] = frozenset(
         ("", "max_jobs"),
         ("", "temp_dir"),
         *((table, key) for table, key in _SCHEMA if table in ("screenshots", "pixhost", "torrent", "post")),
-        *((table, key) for table, key in _SCHEMA if table in ("qbittorrent", "jackett", "rutor")),
+        *((table, key) for table, key in _SCHEMA if table in ("qbittorrent", "jackett", "rutor", "tmdb")),
     }
 )
-SECRETS: frozenset[tuple[str, str]] = frozenset({("qbittorrent", "password"), ("jackett", "api_key")})
+SECRETS: frozenset[tuple[str, str]] = frozenset(
+    {("qbittorrent", "password"), ("jackett", "api_key"), ("tmdb", "api_key")}
+)
 
 
 def key_name(key: tuple[str, str]) -> str:
@@ -451,6 +457,7 @@ def load_config(
         qbit=_qbit_config(flat),
         jackett=_jackett_config(flat),
         rutor=_rutor_config(flat),
+        tmdb_api_key=flat.get(("tmdb", "api_key"), "").strip() or os.environ.get(TMDB_KEY_ENV, "").strip(),
         roots=tuple(resolved_roots),
         output_dir=_expand(flat.get(("", "output_dir"), str(DEFAULT_OUTPUT_DIR))).absolute(),
         token=token.token,

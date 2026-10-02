@@ -130,6 +130,11 @@ class Store:
         )
         return found[0] if found else None
 
+    def by_local_path(self, path: str) -> Record | None:
+        """下载完成后在本地的路径对应的资源（用它的种子标题猜片名）。"""
+        found = self._query(f"SELECT {', '.join(_COLUMNS)} FROM records WHERE local_path = ?", [json.dumps(path)])
+        return found[0] if found else None
+
     def list(self, statuses: Iterable[Status] = STATUSES) -> list[Record]:
         wanted = [json.dumps(status) for status in statuses]
         if not wanted:

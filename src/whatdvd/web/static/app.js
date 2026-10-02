@@ -39,6 +39,7 @@ const state = {
   stream: null,
   route: null,
   opts: null,           // 表单选项，在各页面之间共享
+  titles: new Map(),    // 来源路径 → 从 TMDB 选中的片名 { match, region, edition }
   pollTimer: null,
   toastTimer: null,
   releaseTimer: null,
@@ -376,6 +377,13 @@ function jobBodies(kind, path, single) {
   // 发种名称只用于单个来源：批量提交时各自用原名
   const seed_name = single ? opts.seedName || "" : "";
   const run = { kind: "run", path, count: opts.count, upload: opts.upload, seed_name };
+  const chosen = single ? state.titles.get(path) : null;
+  if (chosen) {
+    const t = chosen.match;
+    run.title = { title: t.title, original_title: t.original_title, original_language: t.original_language, year: t.year, imdb_id: t.imdb_id, tmdb_url: t.url };
+    run.region = chosen.region;
+    run.edition = chosen.edition;
+  }
   const torrent = { kind: "torrent", path, announces: opts.tracker.split(/\s+/).filter(Boolean), piece_length: opts.piece, seed_name };
   return kind === "both" ? [run, torrent] : kind === "run" ? [run] : [torrent];
 }
@@ -442,6 +450,96 @@ function optionsRow() {
     state.config.seed_dir ? h("label", { class: "wide", title: `用硬链接放到发种目录 ${state.config.seed_dir.path}，原始下载不动` },
       "发种名称", h("input", { id: "opt-seedname", type: "text", value: "", placeholder: "留空用原名；例如 IMDb 片名和年份", spellcheck: "false" }),
       h("span", { class: "hint" }, "最外层文件夹名")) : null);
+}
+
+// ---------- 查片名（TMDB）----------
+
+function titlePanel(path, info) {
+  const heading = h("h2", { class: "section-title" }, "片名");
+  if (!info.tmdb) {
+    return h("section", {}, heading, notice("", "在设置页面填写 TMDB API Key 后，可以在这里查片名，按英文名和原名给出 PTP 发种名称和 BHD 标题。"));
+  }
+  const query = h("input", { type: "search", value: info.guess.query, placeholder: "片名（英文、原名或俄文都可以）", spellcheck: "false" });
+  const year = h("input", { type: "number", value: info.guess.year || "", placeholder: "年份", min: 1870, max: 2100 });
+  const go = h("button", { type: "button", class: "btn small glass" }, icon("search"), "查 TMDB");
+  const results = h("div", { class: "title-results" });
+  const chosenBox = h("div", {});
+  const search = async () => {
+    go.disabled = true;
+    results.replaceChildren(h("span", { class: "hint" }, "查询中…"));
+    try {
+      const params = new URLSearchParams({ q: query.value.trim() });
+      if (year.value) params.set("year", year.value);
+      const data = await api(`/api/tmdb/search?${params}`);
+      results.replaceChildren(...(data.results.length ? data.results.map((m) => {
+        const pick = h("button", { type: "button", class: "title-option" },
+          h("b", {}, `${m.title}${m.year ? ` (${m.year})` : ""}`),
+          h("span", {}, [m.kind === "tv" ? "剧集" : "电影", m.original_title && m.original_title !== m.title ? m.original_title : null].filter(Boolean).join(" · ")));
+        pick.addEventListener("click", () => choose(m, pick));
+        return pick;
+      }) : [h("span", { class: "hint" }, "没有找到，换个写法或去掉年份再试")]));
+    } catch (error) {
+      results.replaceChildren();
+      if (!(error instanceof AuthError)) toast(error.message);
+    } finally {
+      go.disabled = false;
+    }
+  };
+  const choose = async (m, button) => {
+    button.disabled = true;
+    try {
+      const detail = await api(`/api/tmdb/${m.kind}/${m.id}?disc=${encodeURIComponent(info.disc_kind)}`);
+      const previous = state.titles.get(path);
+      state.titles.set(path, { match: detail, region: previous?.region || "", edition: previous?.edition || "" });
+      const seedBox = $("opt-seedname");
+      if (seedBox && !seedBox.value.trim()) seedBox.value = detail.ptp_name;
+      renderChosen();
+    } catch (error) {
+      if (!(error instanceof AuthError)) toast(error.message);
+    } finally {
+      button.disabled = false;
+    }
+  };
+  const renderChosen = () => {
+    const chosen = state.titles.get(path);
+    if (!chosen) { chosenBox.replaceChildren(); return; }
+    const t = chosen.match;
+    const bhd = h("code", {});
+    const updateBhd = () => {
+      bhd.textContent = [t.bhd_head, chosen.edition, chosen.region, "‹PAL/NTSC›", info.disc_kind, "MPEG-2", "‹音轨›"].filter(Boolean).join(" ");
+    };
+    const field = (key, placeholder) => {
+      const box = h("input", { type: "text", value: chosen[key], placeholder, spellcheck: "false" });
+      box.addEventListener("input", () => { chosen[key] = box.value.trim(); updateBhd(); });
+      return box;
+    };
+    updateBhd();
+    const fill = h("button", { type: "button", class: "btn small glass" }, "填入发种名称");
+    fill.addEventListener("click", () => { const box = $("opt-seedname"); if (box) { box.value = t.ptp_name; box.focus(); } });
+    const clear = h("button", { type: "button", class: "btn small glass" }, "不用这个");
+    clear.addEventListener("click", () => { state.titles.delete(path); renderChosen(); });
+    chosenBox.replaceChildren(h("div", { class: "title-chosen" },
+      h("p", {}, h("b", {}, `${t.title}${t.year ? ` (${t.year})` : ""}`),
+        t.original_title && t.original_title !== t.title ? h("span", {}, ` · 原名 ${t.original_title}`) : null,
+        h("a", { href: t.url, target: "_blank", rel: "noopener noreferrer" }, "TMDB"),
+        t.imdb_url ? h("a", { href: t.imdb_url, target: "_blank", rel: "noopener noreferrer" }, `IMDb ${t.imdb_id}`) : h("span", { class: "hint" }, "TMDB 中没有 IMDb 编号")),
+      h("dl", {},
+        h("dt", {}, "PTP 发种名称"), h("dd", {}, h("code", {}, t.ptp_name),
+          state.config.seed_dir ? fill : h("span", { class: "hint" }, "改文件夹名需要在配置文件中设置发种目录（seed_dir）"),
+          copyButton("复制", async () => t.ptp_name)),
+        h("dt", {}, "BHD 标题"), h("dd", {}, bhd, h("span", { class: "hint" }, "制式和音轨在生成截图后补全，任务结果中给出完整标题")),
+        h("dt", {}, "版本"), h("dd", {}, field("edition", "可留空，例如 Director's Cut")),
+        h("dt", {}, "地区或发行商"), h("dd", {}, field("region", "可留空，例如 RUS、Criterion Collection"))),
+      h("p", { class: "hint" }, "生成截图时会带上这个片名；IMDb 名和 TMDB 名偶尔不同，PTP 以 IMDb 为准，请点链接核对。"),
+      clear));
+  };
+  go.addEventListener("click", search);
+  query.addEventListener("keydown", (event) => { if (event.key === "Enter") search(); });
+  renderChosen();
+  const from = info.guess.from === "release" ? "（按资源标题猜的）" : "（按文件夹名猜的）";
+  return h("section", {}, heading,
+    h("div", { class: "title-search" }, query, year, go, h("span", { class: "hint" }, from)),
+    results, chosenBox);
 }
 
 // 来源所在的浏览目录和发种目录不在同一个文件系统时，无法建立硬链接
@@ -523,6 +621,7 @@ async function showSource(path) {
           h("span", {}, `${d.media_type} · ${KIND_LABEL[d.kind]} · ${formatBytes(d.bytes)}`),
           h("span", { class: "where" }, shortPath(d.kind === "iso" ? d.path : parentOf(d.path))))))));
   }
+  if (hasDiscs) sections.push(titlePanel(path, info));
   const related = state.jobs.filter((j) => j.path === path);
   if (related.length) {
     sections.push(h("section", {}, h("h2", { class: "section-title" }, "这个来源的任务"),
@@ -534,6 +633,8 @@ async function showSource(path) {
   setMain(
     hero({ eyebrow: KIND_LABEL[info.kind] || "目录", title: info.name || path, meta, backdrop, children: [actions, optionsRow()] }),
     h("div", { class: "content" }, sections));
+  const chosen = state.titles.get(path);
+  if (chosen && $("opt-seedname")) $("opt-seedname").value = chosen.match.ptp_name;
 }
 
 // ---------- 页面：任务 ----------
@@ -694,6 +795,15 @@ function renderResult(job) {
     h("span", {}, h("b", {}, result.discs.length), " 张盘"),
     h("span", {}, "截图 ", h("b", {}, `${shots.filter((s) => s.ok).length} / ${shots.length}`)),
     job.params.upload ? h("span", {}, "已上传 ", h("b", {}, shots.filter((s) => s.url).length), " 张") : h("span", {}, "未上传图床")));
+  if (result.names) {
+    const n = result.names;
+    nodes.push(h("section", { class: "code" },
+      h("header", {}, "BHD 标题", h("span", { class: "sp" }),
+        n.imdb_id ? h("a", { class: "fmt", href: `https://www.imdb.com/title/${n.imdb_id}/`, target: "_blank", rel: "noopener noreferrer" }, `IMDb ${n.imdb_id}`) : null,
+        copyButton("复制", async () => n.bhd, "amber")),
+      h("pre", {}, n.bhd)));
+    if (!n.audio) nodes.push(notice("warn", "MediaInfo 中没有读到音轨，BHD 标题缺少音轨部分，请手动补上。"));
+  }
   if (result.seed_path && state.config.seed_dir && result.seed_path.startsWith(`${state.config.seed_dir.path}/`)) {
     nodes.push(h("p", { class: "seed-row" }, "发种目录：", h("code", { class: "path" }, result.seed_path)));
   }
@@ -841,6 +951,12 @@ function renderSettings(data) {
     return r.indexers.length ? `连接成功，已配置的站点：${r.indexers.map((i) => `${i.name}（${i.id}）`).join("、")}` : "连接成功，但 Jackett 中还没有配置站点";
   }));
 
+  const tmResult = h("small", { class: "test-result" });
+  const tmTest = h("button", { type: "button", class: "btn small glass" }, "测试");
+  tmTest.addEventListener("click", () => testConnection(tmTest, tmResult, "/api/settings/test/tmdb", {
+    api_key: secretValue(ctl, "tmdb.api_key"),
+  }, () => "API Key 有效"));
+
   const pathMap = Object.entries(v.qbittorrent.path_map).map(([a, b]) => `${a} = ${b}`).join("\n");
   const form = h("form", { class: "settings-form", novalidate: true },
     section("截图", null,
@@ -884,7 +1000,9 @@ function renderSettings(data) {
       row("站点", h("span", {}, input("jackett.indexer", v.jackett.indexer, { list: "jackett-indexers" }), indexerList), "all 为全部已配置的站点；点“测试连接”后可以从列表中选"),
       row("搜索关键词", input("jackett.queries", v.jackett.queries.join(" ")), "多个用空格分隔"),
       row("自动搜索", number("jackett.interval", v.jackett.interval, 0, 10080), "分钟一次；0 为只手动搜索"),
-      row("只要影视类", toggle("jackett.films_only", v.jackett.films_only, "只要分类 2000（电影）和 5000（电视剧、动画、纪录片），去掉音乐、培训、体育等；Jackett 的 rutor 不区分分类，无法过滤"))));
+      row("只要影视类", toggle("jackett.films_only", v.jackett.films_only, "只要分类 2000（电影）和 5000（电视剧、动画、纪录片），去掉音乐、培训、体育等；Jackett 的 rutor 不区分分类，无法过滤"))),
+    section("TMDB", "填写 API Key 即启用：在来源页查片名，按 IMDb / TMDB 的英文名和原名给出 PTP 发种名称和 BHD 标题。API Key 在 themoviedb.org 的账号设置中免费申请，v3 API Key 和 v4 读取令牌都可以。",
+      row("API Key", h("span", { class: "inline" }, secret("tmdb.api_key", v.tmdb.api_key_set, "TMDB 的 API Key 或读取令牌"), tmTest), tmResult)));
 
   const error = h("div", { class: "form-errors" });
   const save = h("button", { type: "submit", class: "btn amber" }, "保存");
@@ -981,6 +1099,8 @@ function collectSettings(ctl, v, pathMapText) {
   put("jackett", "url", ctl["jackett.url"].value.trim(), j.url);
   const key = secretValue(ctl, "jackett.api_key");
   if (key !== null) put("jackett", "api_key", key, undefined);
+  const tmKey = secretValue(ctl, "tmdb.api_key");
+  if (tmKey !== null) put("tmdb", "api_key", tmKey, undefined);
   put("jackett", "indexer", ctl["jackett.indexer"].value.trim() || "all", j.indexer);
   put("jackett", "queries", ctl["jackett.queries"].value.split(/[\s,，]+/).filter(Boolean), j.queries);
   put("jackett", "interval", int("jackett.interval"), j.interval);

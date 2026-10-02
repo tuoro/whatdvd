@@ -74,6 +74,16 @@ seed_dir = "/data/seed"     # 必须和下载目录在同一个文件系统
 - 做种完成后可以点“添加到 qB 做种”：种子添加到单独的分类 `qbittorrent.seed_category`（默认 `whatdvd-seed`，必须和下载用的分类不同，否则会被当成新下载再处理一遍），保存路径指向发种目录（经 `path_map` 换算成 qB 中的路径），跳过校验直接做种。qB 必须能看到发种目录。
 - 这是项目负责人同意的、和 inexistence 不同的做法（inexistence 直接在原目录上做种）。不设置 `seed_dir` 时行为不变。
 
+## 查片名（TMDB，可选）
+
+在设置页面填写 TMDB 的 API Key（在 themoviedb.org 的账号设置中免费申请，v3 API Key 和 v4 读取令牌都可以；也可以用环境变量 `WHATDVD_TMDB_API_KEY` 或配置文件的 `[tmdb] api_key`）后，来源页面多出“片名”：
+
+- 按文件夹名猜搜索词和年份（从资源页下载的，用种子标题猜，常带英文名，例如 `Изумрудный лес / The Emerald Forest (1985)`），可以修改；电影和剧集一起搜，俄文等译名也能搜到。
+- 选中后给出：
+  - **PTP 发种名称**：IMDb / TMDB 的英文名 + 年份 + 盘型，例如 `Come.and.See.1985.DVD9`（PTP 2.1.1 要求和 IMDb 的原名或英文名一致）。配置了发种目录时自动填进“发种名称”。
+  - **BHD 标题**：写法同 Upload-Assistant，`英文名 [AKA 原名] 年份 [版本] [地区或发行商] PAL|NTSC DVD9 MPEG-2 音轨`，例如 `Come and See AKA Иди и смотри 1985 RUS PAL DVD9 MPEG-2 DD5.1`。原名和英文名差别够大时才加 AKA；DD 音轨写成 `DD5.1`（BHD 3.4.4），其他写成 `DTS 5.1`。制式和音轨在生成截图后从识别结果和 VOB 的 MediaInfo 中补全，完整标题显示在任务结果里。
+  - TMDB 和 IMDb 链接。IMDb 名和 TMDB 名偶尔不同，PTP 以 IMDb 为准，请核对。
+
 ## 资源获取（Jackett + qBittorrent，可选）
 
 通过 [Jackett](https://github.com/Jackett/Jackett) 搜索 rutracker、rutor、kinozal 等站点上的 DVD 原盘，在界面中挑选后推送到 qBittorrent，下载完成后自动走完整流程（截图、MediaInfo、上传图床、发布说明）。whatdvd 只对接两者的 API，不负责部署。可以在设置页面中填写，也可以写在配置文件里：

@@ -417,6 +417,67 @@ def test_seed_name_requires_seed_dir(authed: TestClient, media: Path) -> None:
     assert authed.post(f"/api/jobs/{job['id']}/seed").status_code == 404  # 没有配置 qBittorrent
 
 
+def test_tmdb_lookup(tmp_path: Path, media: Path) -> None:
+    """来源页查片名：猜搜索词、搜索、详情里给出 PTP 发种名称和 BHD 标题开头。"""
+    from test_tmdb import FakeTmdb
+
+    from whatdvd.tmdb import Tmdb
+
+    fake = FakeTmdb()
+    make_file(media / "Иди и смотри (1985) DVD9" / "VIDEO_TS" / "VTS_01_1.VOB", 10)
+    config = ServerConfig(roots=(media.resolve(),), output_dir=tmp_path / "out", token=TOKEN, tmdb_api_key="k")
+    app = create_app(config, runner=FakeRunner(), tmdb_factory=lambda key: Tmdb(key, transport=httpx.MockTransport(fake)))
+    with TestClient(app, headers={"Authorization": f"Bearer {TOKEN}"}) as client:
+        info = client.get("/api/source", params={"path": str(media / "Иди и смотри (1985) DVD9")}).json()
+        assert info["tmdb"] is True and info["disc_kind"] == "DVD5"
+        assert info["guess"] == {"query": "Иди и смотри", "year": 1985, "from": "name"}
+
+        results = client.get("/api/tmdb/search", params={"q": "Иди и смотри", "year": 1985}).json()["results"]
+        assert results[0]["kind"] == "tv" and results[1]["title"] == "Come and See"
+
+        detail = client.get("/api/tmdb/movie/25237", params={"disc": "DVD9"}).json()
+        assert detail["imdb_id"] == "tt0091251"
+        assert detail["ptp_name"] == "Come.and.See.1985.DVD9"
+        assert detail["bhd_head"] == "Come and See AKA Иди и смотри 1985"
+
+        assert client.post("/api/settings/test/tmdb", json={}).json() == {"ok": True}
+        assert client.get("/api/tmdb/search", params={"q": " "}).status_code == 400
+
+        bad = {"kind": "run", "path": str(media / "Movie A"), "count": 3, "title": {"title": "X", "imdb_id": "nope"}}
+        assert client.post("/api/jobs", json=bad).status_code == 422
+
+
+def test_tmdb_requires_key(authed: TestClient, media: Path) -> None:
+    info = authed.get("/api/source", params={"path": str(media / "Movie A")}).json()
+    assert info["tmdb"] is False and info["guess"]["query"] == "Movie A"
+    response = authed.get("/api/tmdb/search", params={"q": "Film"})
+    assert response.status_code == 400 and "TMDB API Key" in response.json()["detail"]
+
+
+def test_site_names_from_run_result(tmp_path: Path) -> None:
+    """截图任务完成后的 BHD 标题：制式、盘型来自识别结果，音轨来自 VOB 的 MediaInfo。"""
+    from types import SimpleNamespace
+
+    from whatdvd.web.app import _site_names
+    from whatdvd.workflow import DiscResult, RunResult
+
+    mediainfo = tmp_path / "Film.mediainfo.txt"
+    mediainfo.write_text("General\nFormat : MPEG-PS\n\nAudio\nFormat : AC-3\nChannel(s) : 6 channels\n"
+                         "Channel layout : L R C LFE Ls Rs\n", encoding="utf-8")
+
+    def disc(media_type: str) -> DiscResult:
+        analysis = SimpleNamespace(standard="PAL", disc=SimpleNamespace(media_type=media_type))
+        return DiscResult(source=tmp_path, label="x", analysis=analysis, output=SimpleNamespace(mediainfo=mediainfo))  # type: ignore[arg-type]
+
+    result = RunResult(discs=[disc("DVD9"), disc("DVD9")])
+    params = {"title": {"title": "Come and See", "original_title": "Иди и смотри", "original_language": "ru",
+                        "year": 1985, "imdb_id": "tt0091251"}, "region": "RUS", "edition": ""}
+    names = _site_names(result, params)
+    assert names == {"bhd": "Come and See AKA Иди и смотри 1985 RUS PAL 2xDVD9 MPEG-2 DD5.1", "audio": "DD5.1",
+                     "imdb_id": "tt0091251", "tmdb_url": None}
+    assert _site_names(result, {}) is None
+
+
 # ---------- 设置页面 ----------
 
 
