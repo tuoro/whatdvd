@@ -58,3 +58,15 @@ def test_search_imdb_uses_movie_search() -> None:
     jackett = Jackett("http://jackett:9117", "KEY", indexer="blutopia-api", transport=httpx.MockTransport(handler))
     assert jackett.search_imdb("tt0091251") == []
     assert seen == [{"apikey": "KEY", "t": "movie", "imdbid": "tt0091251"}]
+
+
+def test_existing_dvds_size_match() -> None:
+    """按 DVD 文件总大小比较：完全相同的很可能就是这张盘（改名不影响大小），只差一点的多半是多了 nfo、封面。"""
+    exact, near, other = (Release(guid=str(i), indexer="Blutopia", title=f"Film 2001 PAL DVD9 DD 5.1-{i}", size=size,
+                                  published=None, details_url=None, download_url=None, magnet=None, info_hash=None,
+                                  seeders=None)
+                          for i, size in enumerate((7_500_000_000, 7_500_000_000 + 3_000_000, 6_900_000_000)))
+    found = existing_dvds("blutopia-api", [other, near, exact], "DVD9", "PAL", size=7_500_000_000)
+    assert [(e.title[-1], e.size_match, e.size_diff) for e in found] == [
+        ("0", "exact", 0), ("1", "near", 3_000_000), ("2", None, -600_000_000)]
+    assert all(e.size_match is None for e in existing_dvds("blutopia-api", [exact], "DVD9", "PAL"))  # 不知道大小

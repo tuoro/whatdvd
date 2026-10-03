@@ -541,7 +541,7 @@ function titlePanel(path, info) {
       dupeButton.disabled = true;
       dupeBox.replaceChildren(h("p", { class: "hint" }, "查询中…"));
       try {
-        const r = await api(`/api/dupes?imdb=${encodeURIComponent(t.imdb_id)}&kind=${encodeURIComponent(info.disc_kind)}`);
+        const r = await api(`/api/dupes?imdb=${encodeURIComponent(t.imdb_id)}&kind=${encodeURIComponent(info.disc_kind)}&size=${info.total_bytes || ""}`);
         dupeBox.replaceChildren(r.sites.length ? dupesPanel(r.sites, { kind: info.disc_kind })
           : notice("", "还没有设置查重站点：在设置页面 Jackett 一节填写，例如 blutopia-api。"));
       } catch (error) {
@@ -1106,12 +1106,14 @@ function dupesPanel(sites, names) {
     if (!site.items.length) return h("p", {}, h("b", {}, site.site), "：没有这部片的 DVD 原盘");
     return h("div", {}, h("p", {}, h("b", {}, site.site), `：已有 ${site.items.length} 个 DVD 原盘`),
       h("ul", { class: "dupes" }, site.items.map((e) => h("li", { class: e.same ? "same" : "" },
-        e.same ? h("span", { class: "chip warn" }, "格式、制式相同") : null,
+        e.size_match === "exact" ? h("span", { class: "chip bad" }, "大小完全相同：很可能就是这张盘")
+          : e.size_match === "near" ? h("span", { class: "chip warn" }, `大小只差 ${formatBytes(Math.abs(e.size_diff))}（可能多了或少了 nfo、封面）`)
+          : e.same ? h("span", { class: "chip warn" }, "格式、制式相同") : null,
         e.url && /^https?:\/\//i.test(e.url) ? h("a", { href: e.url, target: "_blank", rel: "noopener noreferrer" }, e.title) : h("span", {}, e.title),
         h("span", { class: "hint" }, ` · ${formatBytes(e.size)}${e.seeders !== null && e.seeders !== undefined ? ` · ${e.seeders} 做种` : ""}`)))));
   });
   return h("section", { class: "dupes-panel" }, h("h3", {}, "查重", ours ? h("span", { class: "hint" }, `　这张盘：${ours}`) : null),
-    ...blocks, h("p", { class: "hint" }, "只列出站点上已有的 DVD 原盘，是否算重复、能不能替换请按站点规则判断。"));
+    ...blocks, h("p", { class: "hint" }, "只列出站点上已有的 DVD 原盘，是否算重复、能不能替换请按站点规则判断。大小按 DVD 文件（VIDEO_TS 或 ISO）比较，改名不影响大小；站点上的种子多带了 nfo、封面时会差一点。"));
 }
 
 // IMDb 数据集：状态和“下载 / 更新”按钮，更新时轮询进度

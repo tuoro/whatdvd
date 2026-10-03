@@ -202,7 +202,7 @@ def _disc_summary(source: Path) -> dict[str, Any]:
     if is_iso(source):
         name, size = source.stem, source.stat().st_size
     else:
-        name = source.parent.name
+        name = source.parent.name if source.name.upper() == "VIDEO_TS" else source.name  # 平铺的盘用自己的名字
         size = sum(p.stat().st_size for p in source.iterdir() if p.is_file())
     return {
         "name": name,
@@ -961,7 +961,7 @@ def create_app(
 
     dupe_cache: dict[tuple[str, str], tuple[float, list[Release]]] = {}
 
-    def check_dupes(imdb_id: str, kind: str, standard: str | None) -> list[dict[str, Any]]:
+    def check_dupes(imdb_id: str, kind: str, standard: str | None, size: int | None = None) -> list[dict[str, Any]]:
         """每个查重站点：{"site", "error", "items"}。同一站点同一部片的结果缓存一小时。"""
         jk = cfg().jackett
         sites = []
@@ -980,16 +980,19 @@ def create_app(
                     releases, error = [], str(exc)
                 finally:
                     client.close()
-            items = [asdict(e) for e in existing_dvds(site, releases, kind, standard)]
+            items = [asdict(e) for e in existing_dvds(site, releases, kind, standard, size)]
             sites.append({"site": site, "error": error, "items": items})
         return sites
 
     @app.get("/api/dupes", dependencies=auth)
-    async def dupes_api(imdb: str, kind: str, standard: str | None = None) -> dict[str, Any]:
-        """片名确定后查重：kind 为这张盘的格式（"DVD9"、"2xDVD9"），standard 为 PAL / NTSC。"""
+    async def dupes_api(
+        imdb: str, kind: str, standard: str | None = None, size: Annotated[int | None, Query(ge=0)] = None
+    ) -> dict[str, Any]:
+        """片名确定后查重：kind 为这张盘的格式（"DVD9"、"2xDVD9"），standard 为 PAL / NTSC，
+        size 为这张盘的 DVD 文件总大小（字节）。"""
         if not re.fullmatch(r"tt\d{7,9}", imdb):
             raise HTTPException(400, "IMDb 编号格式不对，例如 tt0091251")
-        return {"sites": await asyncio.to_thread(check_dupes, imdb, kind, standard or None)}
+        return {"sites": await asyncio.to_thread(check_dupes, imdb, kind, standard or None, size or None)}
 
     # ---------- IFO 统计（处理过的盘的 VIDEO_TS.IFO 头部，可导出 CSV） ----------
 
@@ -1126,12 +1129,16 @@ def create_app(
         dupes = None
         jk = cfg().jackett
         if names and names.get("imdb_id") and jk is not None and jk.dupe_indexers:
-            dupes = check_dupes(names["imdb_id"], names["kind"], names["standard"])
+            size = sum(d.get("total_bytes") or 0 for d in serialized["discs"]) or None
+            dupes = check_dupes(names["imdb_id"], names["kind"], names["standard"], size)
             for site in dupes:
                 if site["error"]:
                     reporter.error(f"查重（{site['site']}）失败：{site['error']}")
                 for item in site["items"]:
-                    reporter.info(f"查重（{site['site']}）：{'【格式和制式相同】' if item['same'] else ''}{item['title']}")
+                    mark = ("【大小完全相同，很可能就是这张盘】" if item["size_match"] == "exact"
+                            else "【大小只差一点】" if item["size_match"] == "near"
+                            else "【格式和制式相同】" if item["same"] else "")
+                    reporter.info(f"查重（{site['site']}）：{mark}{item['title']}")
                 if not site["error"] and not site["items"]:
                     reporter.info(f"查重（{site['site']}）：没有这部片的 DVD 原盘")
         return {**serialized, "seed_path": str(path), "names": names, "dupes": dupes}

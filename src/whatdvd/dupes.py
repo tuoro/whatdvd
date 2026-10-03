@@ -31,6 +31,11 @@ class Existing:
     seeders: int | None
     same: bool
     """格式和制式都和这张盘相同（制式写了才比较）。"""
+    size_match: str | None = None
+    """"exact"：大小和这张盘的 DVD 文件总大小完全相同，很可能就是这张盘（改名不影响大小）；
+    "near"：只差一点（多了或少了 nfo、封面等附加文件）；None：对不上或不知道这张盘的大小。"""
+    size_diff: int = 0
+    """站点上的大小减这张盘的大小（字节）。"""
 
 
 def dvd_kind(title: str) -> str | None:
@@ -44,7 +49,14 @@ def dvd_kind(title: str) -> str | None:
     return "+".join(parts) or None
 
 
-def existing_dvds(site: str, releases: list[Release], kind: str, standard: str | None) -> list[Existing]:
+NEAR_BYTES = 50 * 1024 * 1024
+"""大小只差这么多以内算“接近”：nfo、封面、截图之类的附加文件。"""
+
+
+def existing_dvds(
+    site: str, releases: list[Release], kind: str, standard: str | None, size: int | None = None
+) -> list[Existing]:
+    """size：这张盘的 DVD 文件总大小（VIDEO_TS 中的文件或 ISO）。"""
     found = []
     for release in releases:
         theirs = dvd_kind(release.title)
@@ -53,11 +65,18 @@ def existing_dvds(site: str, releases: list[Release], kind: str, standard: str |
         match = _STANDARD.search(release.title)
         their_standard = match[1] if match else None
         same = theirs == kind and (standard is None or their_standard is None or their_standard == standard)
+        diff = release.size - size if size and release.size else 0
+        size_match = None
+        if size and release.size:
+            size_match = "exact" if diff == 0 else "near" if abs(diff) <= NEAR_BYTES else None
         found.append(Existing(site, release.title, theirs, their_standard, release.size, release.details_url,
-                              release.seeders, same))
-    return sorted(found, key=lambda e: (not e.same, e.title))
+                              release.seeders, same, size_match, diff))
+    order = {"exact": 0, "near": 1, None: 2}
+    return sorted(found, key=lambda e: (order[e.size_match], not e.same, e.title))
 
 
-def check(jackett: Jackett, site: str, imdb_id: str, kind: str, standard: str | None) -> list[Existing]:
+def check(
+    jackett: Jackett, site: str, imdb_id: str, kind: str, standard: str | None, size: int | None = None
+) -> list[Existing]:
     """在一个站点上查这部片已有的 DVD 原盘。jackett 为这个站点的 Jackett 客户端（indexer 为站点 id）。"""
-    return existing_dvds(site, jackett.search_imdb(imdb_id), kind, standard)
+    return existing_dvds(site, jackett.search_imdb(imdb_id), kind, standard, size)

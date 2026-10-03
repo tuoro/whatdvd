@@ -176,6 +176,7 @@ films_only = true        # 只要影视类
 
 - 在设置页面 Jackett 一节的“查重站点”填写 Jackett 中的站点 ID，多个用空格分隔，例如 `blutopia-api`（站点要先在 Jackett 中添加好）。配置文件写 `dupe_indexers = ["blutopia-api"]`。
 - 处理完成后，任务结果中列出每个站点已有的 DVD 原盘：标题（链接到站点上的种子页）、大小、做种数；格式（DVD5、DVD9、2xDVD9……）和制式（PAL、NTSC）都和这张盘相同的排在前面并标出。来源页选好片名后也可以点“查重”。
+- 大小按 DVD 文件（VIDEO_TS 中的文件或 ISO）比较：和站点上的种子完全相同的标为“很可能就是这张盘”（改名、整理成 VIDEO_TS 结构都不影响大小，转种的盘会完全相同）；只差 50 MB 以内的标为“只差一点”，多半是一边多了 nfo、封面等附加文件，请点进去确认。思路来自 Upload-Assistant（它对 DVD 原盘只比名字和总大小，不比 DVD5/DVD9、PAL/NTSC）。
 - 只看 DVD 原盘：Blu-ray、Remux、WEB-DL、压制和单个视频文件都不算。站点上的 DVD 标题按 Upload-Assistant 的写法（`Come and See AKA Idi i smotri 1985 PAL 2xDVD9 DD 5.1`）识别格式和制式。
 - 只列出来，不判断是否重复：能不能发、能不能替换请按站点规则判断。同一站点同一部片的结果缓存一小时，不会反复请求。
 - 已适配 Blutopia（Jackett 的 `blutopia-api`）。
