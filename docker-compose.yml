@@ -17,7 +17,10 @@ services:
     #   WHATDVD_JACKETT_API_KEY: "..."
     volumes:
       - /path/to/downloads:/media:ro
-      # 使用资源获取时，把 qB 的下载目录也挂载进来，并在配置里设置 path_map，例如：
+      # 使用资源获取时，把 qB 的下载目录也挂载进来（要在 /media 之内），并在设置页面的“路径映射”中填写
+      # “qB 中的目录 = 容器里的目录”。qB 不在 Docker 里时，例如 qB 存到 /home/me/qb：
+      #   挂载 - /home/me/qb:/media/qb:ro，路径映射填 /home/me/qb = /media/qb，
+      #   “qB 保存路径”留空或填 /home/me/qb（qB 那边的路径），不要填 /media/qb。
       # - /path/to/qb/downloads:/media/qb:ro
       - ./output:/output
       # 使用发种目录（硬链接）时：下载目录和发种目录必须在同一个挂载卷里（分开挂载无法建硬链接），

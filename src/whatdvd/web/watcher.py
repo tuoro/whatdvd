@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import datetime
 import functools
 import hashlib
@@ -13,7 +14,7 @@ import logging
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, NoReturn
 
 import httpx
@@ -440,8 +441,53 @@ class Watcher:
             return None
         return resolved if any(resolved.is_relative_to(root) for root in self.config.roots) else None
 
-    def _start(self, record: Record, local: Path) -> None:
-        """local 为本机路径（已做过路径映射）。"""
+    def _suggest_mapping(self, remote: str) -> tuple[str, str] | None:
+        """qB 的路径在本机找不到时，到 roots 里找同名的文件夹或文件（最多三层），推算 path_map 该怎么填：
+        qB 中 /home/me/downloads/Film、本机 /media/Film → ("/home/me/downloads", "/media")。"""
+        name = PurePosixPath(remote).name
+        if not name:
+            return None
+        for root in self.config.roots:
+            pending, checked = [(root, 0)], 0
+            while pending and checked < 5000:
+                folder, depth = pending.pop(0)
+                try:
+                    entries = list(os.scandir(folder))
+                except OSError:
+                    continue
+                for entry in entries:
+                    checked += 1
+                    if entry.name == name:
+                        remote_parts, local_parts = PurePosixPath(remote).parts, Path(entry.path).parts
+                        same = 0  # 两边末尾相同的部分
+                        while (same < min(len(remote_parts), len(local_parts)) - 1
+                               and remote_parts[-1 - same] == local_parts[-1 - same]):
+                            same += 1
+                        return (str(PurePosixPath(*remote_parts[: len(remote_parts) - same])),
+                                str(Path(*local_parts[: len(local_parts) - same])))
+                    if depth < 2 and entry.is_dir(follow_symlinks=False):
+                        pending.append((Path(entry.path), depth + 1))
+        return None
+
+    def _missing_hint(self, local: Path, remote: str | None) -> str:
+        if remote is None:
+            return f"下载完成，但 {local} 路径不存在。请检查 qbittorrent.path_map 和 roots。"
+        where = f"qB 中的路径是 {remote}" + ("" if str(local) == remote else f"，按 path_map 换算成 {local}")
+        save_path = self.config.qbit.save_path if self.config.qbit else None
+        if save_path and PurePosixPath(save_path) in PurePosixPath(remote).parents:
+            where += (f"；设置里的“qB 保存路径”是 {save_path}，要填 qB 那边的路径，不是 whatdvd 容器里的路径"
+                      "（qB 不在 Docker 里时，填容器里的路径会让 qB 在宿主机上另建一个同名目录）")
+        if suggestion := self._suggest_mapping(remote):
+            return (f"下载完成，但 whatdvd 中找不到这个路径（{where}）。在 {suggestion[1]} 下找到了同名的文件夹："
+                    f"qB 和 whatdvd 看到的目录不同（例如 qB 不在 Docker 里），请在设置页面的路径映射中填写 "
+                    f"“{suggestion[0]} = {suggestion[1]}”，然后点“重新处理”。")
+        return (f"下载完成，但 whatdvd 中找不到这个路径（{where}）。如果 qB 和 whatdvd 看到的目录不同（例如 qB 不在 "
+                f"Docker 里、whatdvd 在），请把 qB 的下载目录挂载进 whatdvd（要在 roots 之内），并在设置页面的路径映射中"
+                f"填写 “qB 中的目录 = whatdvd 中的目录”，然后点“重新处理”。")
+
+    def _start(self, record: Record, local: Path, remote: str | None = None) -> None:
+        """local 为本机路径（已做过路径映射），remote 为 qB 报告的路径。"""
+        remote = remote or record.remote_path
         # 只有磁力链接、推送前看不到种子内容的，以及在 qB 中手动加进分类的：按下载下来的文件夹再查一次
         if local.exists():
             sized = _relative_files(local)
@@ -452,14 +498,10 @@ class Watcher:
                 return
         resolved = self._allowed(local)
         if resolved is None:
-            hint = "路径不存在" if not local.exists() else "不在允许的目录（roots）内"
-            self.store.update(
-                record.id,
-                status="failed",
-                progress=1.0,
-                local_path=str(local),
-                error=f"下载完成，但 {local} {hint}。请检查 qbittorrent.path_map 和 roots。",
-            )
+            error = (self._missing_hint(local, remote) if not local.exists()
+                     else f"下载完成，但 {local} 不在允许的目录（roots）内。请检查 qbittorrent.path_map 和 roots。")
+            self.store.update(record.id, status="failed", progress=1.0, local_path=str(local), remote_path=remote,
+                              error=error)
             return
         job = self._submit_run(resolved, record.title)
         self.store.update(
@@ -467,6 +509,7 @@ class Watcher:
             status="processing",
             progress=1.0,
             local_path=str(resolved),
+            remote_path=remote,
             job_id=job.id,
             output_dir=str(job.output_dir),
             error=None,
@@ -508,7 +551,7 @@ class Watcher:
                     if (record.status, record.progress) != ("downloading", found.progress):
                         self.store.update(record.id, status="downloading", progress=found.progress)
                 else:
-                    self._start(record, self._path_map.to_local(found.content_path))
+                    self._start(record, self._path_map.to_local(found.content_path), found.content_path)
 
             for record in self.store.list(["processing"]):
                 job = self._get_job(record.job_id or "")
@@ -527,9 +570,11 @@ class Watcher:
         record = self.store.get(record_id)
         if record is None:
             raise WatcherError("找不到这个资源")
-        if record.status != "failed" or not record.local_path:
+        if record.status != "failed" or not (record.local_path or record.remote_path):
             raise WatcherError("只有下载完成后处理失败的资源可以重新处理")
-        self._start(record, Path(record.local_path))
+        # 按现在的 path_map 重新换算（改了路径映射后点“重新处理”就能找到）
+        local = self._path_map.to_local(record.remote_path) if record.remote_path else Path(record.local_path or "")
+        self._start(record, local)
         updated = self.store.get(record_id)
         assert updated is not None
         return updated

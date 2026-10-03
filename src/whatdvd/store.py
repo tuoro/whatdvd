@@ -41,6 +41,8 @@ class Record:
     """正面标记，例如“原声，没有翻译（БП）”。"""
     progress: float = 0.0
     local_path: str | None = None
+    remote_path: str | None = None
+    """下载完成时 qB 报告的路径（换算前）：改了 path_map 后“重新处理”按它重新换算。"""
     job_id: str | None = None
     post_file: str | None = None
     output_dir: str | None = None

@@ -260,7 +260,8 @@ def test_completed_outside_roots_or_missing(h: Harness, services: FakeServices, 
     h.run(h.watcher.sync)
     record = h.watcher.store.by_hash("d" * 40)
     assert record is not None and record.status == "failed"
-    assert "路径不存在" in (record.error or "") and "path_map" in (record.error or "")
+    assert "找不到这个路径（qB 中的路径是 /elsewhere/Film）" in (record.error or "") and "路径映射" in (record.error or "")
+    assert record.remote_path == "/elsewhere/Film"
     assert h.submitted == []
 
     outside = tmp_path / "outside"
@@ -542,3 +543,22 @@ def test_loose_streams_warn_but_push(h: Harness, services: FakeServices) -> None
         FakeServices.__call__ = original  # type: ignore[method-assign]
     assert pushed.status == "sent"
     assert any(w.startswith("种子里有 2 个零散的音视频文件（Film.ac3, Film.h264）") for w in pushed.warnings)
+
+
+def test_missing_path_suggests_mapping_and_reprocess_uses_it(
+    h: Harness, services: FakeServices, downloads: Path
+) -> None:
+    """qB 不在 Docker 里、whatdvd 在：qB 的路径在 whatdvd 中不存在。到 roots 里找同名文件夹，推算路径映射；
+    改好映射后“重新处理”按 qB 的原始路径重新换算。"""
+    from whatdvd.qbit import PathMap
+
+    _make_dvd(downloads / "qb" / "Nepobedimye")
+    services.torrent("f" * 40, "stalledUP", 1.0, "/home/me/qb/Nepobedimye")
+    h.run(h.watcher.sync)
+    record = h.watcher.store.by_hash("f" * 40)
+    assert record is not None and record.status == "failed"
+    assert f"“/home/me = {downloads}”" in (record.error or "")  # 两边末尾相同的 qb/Nepobedimye 去掉
+
+    h.watcher._path_map = PathMap((("/home/me", str(downloads)),))  # 设置页面改了路径映射
+    record = h.run(lambda: h.watcher.reprocess(record.id))
+    assert record.status == "processing" and h.submitted == [downloads / "qb" / "Nepobedimye"]
