@@ -6,7 +6,7 @@ API Key 在 themoviedb.org 的账号设置中免费申请；v3 的 API Key 和 v
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from typing import Any, Literal
 
 import httpx
@@ -102,6 +102,13 @@ class Tmdb:
                 found.append((float(item.get("popularity") or 0), _match(kind, item)))  # type: ignore[arg-type]
         found.sort(key=lambda pair: pair[0], reverse=True)
         return [match for _, match in found[:limit]]
+
+    def find_imdb(self, imdb_id: str) -> list[Match]:
+        """按 IMDb 编号找 TMDB 中对应的电影或剧集。"""
+        data = self._get(f"/find/{imdb_id}", external_source="imdb_id")
+        found = [_match("movie", item) for item in data.get("movie_results", [])]
+        found += [_match("tv", item) for item in data.get("tv_results", [])]
+        return [replace(m, imdb_id=imdb_id) for m in found]
 
     def details(self, kind: Kind, tmdb_id: int) -> Match:
         """详情，包括 IMDb 编号。"""

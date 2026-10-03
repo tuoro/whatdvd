@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import hashlib
+import re
 import secrets
 import sqlite3
 import threading
@@ -17,6 +18,7 @@ from typing import Annotated, Any, Literal
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
+from fastapi import Path as PathParam
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
@@ -737,6 +739,7 @@ def create_app(
             "disc_kind": disc_kind([d["media_type"] for d in discs]),
             "guess": {"query": query, "year": year, "from": "release" if record else "name"},
             "tmdb": bool(cfg().tmdb_api_key),
+            "imdb_dataset": imdb_dataset().path.is_file(),
         }
 
     def tmdb_client() -> Tmdb:
@@ -747,33 +750,104 @@ def create_app(
 
     @app.get("/api/tmdb/search", dependencies=auth)
     async def tmdb_search(q: str, year: int | None = None) -> dict[str, Any]:
-        if not q.strip():
-            raise HTTPException(400, "请填写片名")
-        client = tmdb_client()
-        try:
-            matches = await asyncio.to_thread(client.search, q.strip(), year)
-            if not matches and year:  # 年份对不上时（例如按发行年份标的）不限年份再搜一次
-                matches = await asyncio.to_thread(client.search, q.strip(), None)
-            # 搜索结果里没有 IMDb 编号：逐个取详情（并行），好在列表里直接标出 IMDb 的名字
-            detailed = await asyncio.gather(
-                *(asyncio.to_thread(client.details, m.kind, m.id) for m in matches), return_exceptions=True
-            )
-        except TmdbError as error:
-            raise HTTPException(502, str(error)) from None
-        finally:
-            client.close()
+        """按片名搜 TMDB；也可以直接给 IMDb 链接或编号（TMDB 中没有的，用 IMDb 数据集）。"""
+        q = q.strip()
+        if not q:
+            raise HTTPException(400, "请填写片名，或粘贴 IMDb 链接")
         dataset = imdb_dataset()
+        imdb_match = re.search(r"\b(tt\d{5,10})\b", q)
+        if imdb_match:
+            imdb_id = imdb_match.group(1)
+            matches: list[Match] = []
+            if cfg().tmdb_api_key:
+                client = tmdb_factory(cfg().tmdb_api_key)
+                try:
+                    matches = await asyncio.to_thread(client.find_imdb, imdb_id)
+                except TmdbError:
+                    matches = []  # TMDB 查不了时仍可以用 IMDb 数据集
+                finally:
+                    client.close()
+            ids: list[str | None] = [imdb_id] * len(matches)
+        else:
+            client = tmdb_client()
+            try:
+                matches = await asyncio.to_thread(client.search, q, year)
+                if not matches and year:  # 年份对不上时（例如按发行年份标的）不限年份再搜一次
+                    matches = await asyncio.to_thread(client.search, q, None)
+                # 搜索结果里没有 IMDb 编号：逐个取详情（并行），好在列表里直接标出 IMDb 的名字
+                detailed = await asyncio.gather(
+                    *(asyncio.to_thread(client.details, m.kind, m.id) for m in matches), return_exceptions=True
+                )
+            except TmdbError as error:
+                raise HTTPException(502, str(error)) from None
+            finally:
+                client.close()
+            ids = [d.imdb_id if isinstance(d, Match) else None for d in detailed]
         results = []
-        for match, detail in zip(matches, detailed, strict=True):
-            imdb_id = detail.imdb_id if isinstance(detail, Match) else None
+        for match, imdb_id in zip(matches, ids, strict=True):
             found = await asyncio.to_thread(dataset.title, imdb_id, match.original_language) if imdb_id else None
             imdb = {"id": imdb_id, "title": found.title, "year": found.year} if found else {"id": imdb_id}
             results.append({**match.public(), "imdb_id": imdb_id, "imdb": imdb})
+        if imdb_match and not results:
+            found = await asyncio.to_thread(dataset.title, imdb_match.group(1))
+            if found is not None:  # TMDB 中没有，只用 IMDb 数据集
+                results.append({
+                    "kind": "imdb", "id": None, "title": found.title, "original_title": found.original_title,
+                    "year": found.year, "imdb_id": found.imdb_id, "url": None,
+                    "imdb": {"id": found.imdb_id, "title": found.title, "year": found.year},
+                })
         return {"results": results, "dataset": dataset.path.is_file()}
 
+    async def site_names(match: Match | None, imdb_id: str | None, disc: str) -> dict[str, Any]:
+        """片名以 IMDb 数据集为准（PTP 要求和 IMDb 一致），没有时用 TMDB 的；给出 PTP 发种名称和 BHD 标题开头。"""
+        # TMDB 的原始语言只在 IMDb 编号确实属于这个 TMDB 条目时可用（用户可能指定了别的编号）
+        language = match.original_language if match and match.imdb_id in (None, imdb_id) else ""
+        found = await asyncio.to_thread(imdb_dataset().title, imdb_id, language) if imdb_id else None
+        notes: list[str] = []
+        if found is not None:
+            title, original, year, source = found.title, found.original_title, found.year, "IMDb"
+            if match is not None:
+                year = year or match.year
+                if found.title.casefold() != match.title.casefold():
+                    notes.append(f"TMDB 的英文名是“{match.title}”，这里以 IMDb 为准。")
+            else:
+                notes.append("TMDB 中没有这部片，片名来自 IMDb 数据集。")
+        elif match is None:
+            raise HTTPException(404, f"IMDb 数据集中没有 {imdb_id}")
+        else:
+            title, original, year, source = match.title, match.original_title, match.year, "TMDB"
+            if not imdb_id:
+                notes.append("TMDB 中没有这部片的 IMDb 编号，片名来自 TMDB。可以把 IMDb 链接粘贴到上面的搜索框再查一次。")
+            elif imdb_dataset().info() is None:
+                notes.append("还没有下载 IMDb 数据集，片名来自 TMDB，可能和 IMDb 不同。可以在设置页面下载。")
+            else:
+                notes.append(f"IMDb 数据集中没有 {imdb_id}（可能是新片），片名来自 TMDB。可以在设置页面更新数据集。")
+        # BHD 标题的开头（片名、AKA、年份）；地区、制式、音轨在界面和截图任务中补上
+        head = bhd_title(
+            title=title, original_title=original, original_language=language, year=year, standard=None, kind="",
+            audio=None,
+        ).removesuffix(" MPEG-2")
+        base = match.public() if match else {
+            "kind": "imdb", "id": None, "url": None, "original_language": "",
+            "imdb_url": f"https://www.imdb.com/title/{imdb_id}/",
+        }
+        return {
+            **base, "imdb_id": imdb_id, "title": title, "original_title": original, "year": year, "source": source,
+            "tmdb_title": match.title if match else None, "notes": notes, "ptp_name": ptp_name(title, year, disc),
+            "bhd_head": head,
+        }
+
+    @app.get("/api/imdb/title/{imdb_id}", dependencies=auth)
+    async def imdb_title(imdb_id: Annotated[str, PathParam(pattern=r"^tt\d{5,10}$")], disc: str = "") -> dict[str, Any]:
+        """TMDB 中没有的片：只用 IMDb 数据集。"""
+        return await site_names(None, imdb_id, disc)
+
     @app.get("/api/tmdb/{kind}/{tmdb_id}", dependencies=auth)
-    async def tmdb_details(kind: Literal["movie", "tv"], tmdb_id: int, disc: str = "") -> dict[str, Any]:
-        """详情和按站点规则给出的名字。disc 为盘型（例如 DVD9、2xDVD9）。"""
+    async def tmdb_details(
+        kind: Literal["movie", "tv"], tmdb_id: int, disc: str = "",
+        imdb: Annotated[str | None, Query(pattern=r"^tt\d{5,10}$")] = None,
+    ) -> dict[str, Any]:
+        """详情和按站点规则给出的名字。disc 为盘型（例如 DVD9、2xDVD9）；imdb 为用户给的 IMDb 编号（TMDB 中没有时）。"""
         client = tmdb_client()
         try:
             match = await asyncio.to_thread(client.details, kind, tmdb_id)
@@ -781,31 +855,7 @@ def create_app(
             raise HTTPException(502, str(error)) from None
         finally:
             client.close()
-        # 有 IMDb 数据集时片名以 IMDb 为准（PTP 要求和 IMDb 一致），否则用 TMDB 的
-        title, original, year, source = match.title, match.original_title, match.year, "TMDB"
-        notes: list[str] = []
-        found = (
-            await asyncio.to_thread(imdb_dataset().title, match.imdb_id, match.original_language) if match.imdb_id else None
-        )
-        if found is not None:
-            title, original, year, source = found.title, found.original_title, found.year or match.year, "IMDb"
-            if found.title.casefold() != match.title.casefold():
-                notes.append(f"TMDB 的英文名是“{match.title}”，这里以 IMDb 为准。")
-        elif not match.imdb_id:
-            notes.append("TMDB 中没有这部片的 IMDb 编号，片名来自 TMDB，请自己到 IMDb 核对。")
-        elif imdb_dataset().info() is None:
-            notes.append("还没有下载 IMDb 数据集，片名来自 TMDB，可能和 IMDb 不同。可以在设置页面下载。")
-        else:
-            notes.append(f"IMDb 数据集中没有 {match.imdb_id}（可能是新片），片名来自 TMDB。可以在设置页面更新数据集。")
-        # BHD 标题的开头（片名、AKA、年份）；地区、制式、音轨在界面和截图任务中补上
-        head = bhd_title(
-            title=title, original_title=original, original_language=match.original_language,
-            year=year, standard=None, kind="", audio=None,
-        ).removesuffix(" MPEG-2")
-        return {
-            **match.public(), "title": title, "original_title": original, "year": year, "source": source,
-            "tmdb_title": match.title, "notes": notes, "ptp_name": ptp_name(title, year, disc), "bhd_head": head,
-        }
+        return await site_names(match, imdb if imdb else match.imdb_id, disc)
 
     # ---------- IMDb 数据集 ----------
 

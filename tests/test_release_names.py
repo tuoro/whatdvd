@@ -14,6 +14,8 @@ from whatdvd.release_names import audio_from_mediainfo, bhd_title, disc_kind, gu
         ("Изумрудный лес (1985) DVD5", "Изумрудный лес", 1985),
         ("2001 A Space Odyssey (1968) DVD9", "2001 A Space Odyssey", 1968),
         ("Mallrats DVD9", "Mallrats", None),
+        ("Непобедимые (Ленинградцы) 1942 РУ DVD-5", "Непобедимые", 1942),  # 括号里是别名
+        ("Film (Director's Cut) (1999) DVD9", "Film", 1999),
         ("Юрьев день (2008) DVD9", "Юрьев день", 2008),
         ("Film_Name_2004_NTSC_2xDVD9", "Film Name", 2004),
     ],

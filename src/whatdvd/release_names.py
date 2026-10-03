@@ -36,6 +36,7 @@ def guess_query(text: str) -> tuple[str, int | None]:
     year = int(found.group(1)) if found else None
     head = text[: found.start()] if found and found.start() > 0 else text
     head = re.split(r"\s*\|\s*", head)[0]
+    head = re.sub(r"\([^()]*\)|\[[^\[\]]*\]", " ", head)  # 括号里是别名或说明："Непобедимые (Ленинградцы)"
     head = re.sub(r"[\[\](){}]", " ", head)
     segments = [s.strip() for s in head.split(" / ") if s.strip()] or [head]
     latin = [s for s in segments if re.search(r"[A-Za-z]", s) and not re.search(r"[А-Яа-яЁё]", s)]

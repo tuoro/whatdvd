@@ -78,7 +78,8 @@ seed_dir = "/data/seed"     # 也可以在设置页面填写；必须和下载�
 
 在设置页面填写 TMDB 的 API Key（在 themoviedb.org 的账号设置中免费申请，v3 API Key 和 v4 读取令牌都可以；也可以用环境变量 `WHATDVD_TMDB_API_KEY` 或配置文件的 `[tmdb] api_key`）后，来源页面多出“片名”：
 
-- 按文件夹名猜搜索词和年份（从资源页下载的，用种子标题猜，常带英文名，例如 `Изумрудный лес / The Emerald Forest (1985)`），可以修改；电影和剧集一起搜，俄文等译名也能搜到。
+- 搜索框也可以直接粘贴 IMDb 链接或编号（例如 `https://www.imdb.com/title/tt0035118/`）：先按编号在 TMDB 中找，TMDB 中没有的直接用 IMDb 数据集（没有 TMDB API Key 时也可以这样查）。TMDB 的条目没有 IMDb 编号时，也可以这样补上。
+- 按文件夹名猜搜索词和年份（括号里的别名会去掉，例如 `Непобедимые (Ленинградцы) 1942` 搜 `Непобедимые`）（从资源页下载的，用种子标题猜，常带英文名，例如 `Изумрудный лес / The Emerald Forest (1985)`），可以修改；电影和剧集一起搜，俄文等译名也能搜到。
 - 选中后给出：
   - **PTP 发种名称**：IMDb / TMDB 的英文名 + 年份 + 盘型，例如 `Come.and.See.1985.DVD9`（PTP 2.1.1 要求和 IMDb 的原名或英文名一致）。配置了发种目录时自动填进“发种名称”。
   - **BHD 标题**：写法同 Upload-Assistant，`英文名 [AKA 原名] 年份 [版本] [地区或发行商] PAL|NTSC DVD9 MPEG-2 音轨`，例如 `Come and See AKA Иди и смотри 1985 RUS PAL DVD9 MPEG-2 DD5.1`。原名和英文名差别够大时才加 AKA；DD 音轨写成 `DD5.1`（BHD 3.4.4），其他写成 `DTS 5.1`。制式和音轨在生成截图后从识别结果和 VOB 的 MediaInfo 中补全，完整标题显示在任务结果里。

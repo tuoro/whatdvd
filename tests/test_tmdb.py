@@ -33,6 +33,11 @@ class FakeTmdb:
             return httpx.Response(200, json={**RU_MOVIE, "external_ids": {"imdb_id": "tt0091251"}})
         if path == "/3/tv/1920":
             return httpx.Response(200, json={**SERIES, "external_ids": {"imdb_id": "tt0098936"}})
+        if path == "/3/find/tt0091251":
+            assert request.url.params["external_source"] == "imdb_id"
+            return httpx.Response(200, json={"movie_results": [RU_MOVIE], "tv_results": []})
+        if path.startswith("/3/find/"):
+            return httpx.Response(200, json={"movie_results": [], "tv_results": []})
         if path == "/3/configuration":
             return httpx.Response(200, json={"images": {}})
         return httpx.Response(404, json={})
@@ -88,3 +93,10 @@ def test_unreachable() -> None:
 
     with pytest.raises(TmdbError, match="连不上 TMDB"):
         Tmdb("k", transport=httpx.MockTransport(fail)).check()
+
+
+def test_find_by_imdb_id() -> None:
+    client = _client(FakeTmdb())
+    [match] = client.find_imdb("tt0091251")
+    assert (match.kind, match.id, match.title, match.imdb_id) == ("movie", 25237, "Come and See", "tt0091251")
+    assert client.find_imdb("tt0035118") == []

@@ -463,10 +463,11 @@ function imdbLine(imdb, hasDataset) {
 
 function titlePanel(path, info) {
   const heading = h("h2", { class: "section-title" }, "片名");
-  if (!info.tmdb) {
-    return h("section", {}, heading, notice("", "在设置页面填写 TMDB API Key 后，可以在这里查片名，按英文名和原名给出 PTP 发种名称和 BHD 标题。"));
+  if (!info.tmdb && !info.imdb_dataset) {
+    return h("section", {}, heading, notice("", "在设置页面填写 TMDB API Key 或下载 IMDb 数据集后，可以在这里查片名，按英文名和原名给出 PTP 发种名称和 BHD 标题。"));
   }
-  const query = h("input", { type: "search", value: info.guess.query, placeholder: "片名（英文、原名或俄文都可以）", spellcheck: "false" });
+  const placeholder = info.tmdb ? "片名（英文、原名或俄文都可以），或粘贴 IMDb 链接" : "粘贴 IMDb 链接或编号（填写 TMDB API Key 后可以按片名搜）";
+  const query = h("input", { type: "search", value: info.tmdb ? info.guess.query : "", placeholder, spellcheck: "false" });
   const year = h("input", { type: "number", value: info.guess.year || "", placeholder: "年份", min: 1870, max: 2100 });
   const go = h("button", { type: "button", class: "btn small glass" }, icon("search"), "查 TMDB");
   const results = h("div", { class: "title-results" });
@@ -481,11 +482,11 @@ function titlePanel(path, info) {
       results.replaceChildren(...(data.results.length ? data.results.map((m) => {
         const pick = h("button", { type: "button", class: "title-option" },
           h("b", {}, `${m.title}${m.year ? ` (${m.year})` : ""}`),
-          h("span", {}, [m.kind === "tv" ? "剧集" : "电影", m.original_title && m.original_title !== m.title ? m.original_title : null].filter(Boolean).join(" · ")),
+          h("span", {}, [{ tv: "剧集", movie: "电影", imdb: "TMDB 中没有，仅 IMDb 数据集" }[m.kind], m.original_title && m.original_title !== m.title ? m.original_title : null].filter(Boolean).join(" · ")),
           imdbLine(m.imdb, data.dataset));
         pick.addEventListener("click", () => choose(m, pick));
         return pick;
-      }) : [h("span", { class: "hint" }, "没有找到，换个写法或去掉年份再试")]));
+      }) : [h("span", { class: "hint" }, "没有找到。换个写法、去掉年份，或者粘贴 IMDb 链接再试")]));
     } catch (error) {
       results.replaceChildren();
       if (!(error instanceof AuthError)) toast(error.message);
@@ -496,7 +497,10 @@ function titlePanel(path, info) {
   const choose = async (m, button) => {
     button.disabled = true;
     try {
-      const detail = await api(`/api/tmdb/${m.kind}/${m.id}?disc=${encodeURIComponent(info.disc_kind)}`);
+      const disc = `disc=${encodeURIComponent(info.disc_kind)}`;
+      const detail = await api(m.kind === "imdb"
+        ? `/api/imdb/title/${m.imdb_id}?${disc}`
+        : `/api/tmdb/${m.kind}/${m.id}?${disc}${m.imdb_id ? `&imdb=${m.imdb_id}` : ""}`);
       const previous = state.titles.get(path);
       state.titles.set(path, { match: detail, region: previous?.region || "", edition: previous?.edition || "" });
       const seedBox = $("opt-seedname");
@@ -529,7 +533,7 @@ function titlePanel(path, info) {
     chosenBox.replaceChildren(h("div", { class: "title-chosen" },
       h("p", {}, h("b", {}, `${t.title}${t.year ? ` (${t.year})` : ""}`),
         t.original_title && t.original_title !== t.title ? h("span", {}, ` · 原名 ${t.original_title}`) : null,
-        h("a", { href: t.url, target: "_blank", rel: "noopener noreferrer" }, "TMDB"),
+        t.url ? h("a", { href: t.url, target: "_blank", rel: "noopener noreferrer" }, "TMDB") : null,
         t.imdb_url ? h("a", { href: t.imdb_url, target: "_blank", rel: "noopener noreferrer" }, `IMDb ${t.imdb_id}`) : h("span", { class: "hint" }, "TMDB 中没有 IMDb 编号")),
       h("p", { class: "hint" }, t.source === "IMDb" ? "片名、原名和年份来自 IMDb 数据集" : "片名来自 TMDB"),
       ...(t.notes || []).map((n) => notice("warn", n)),

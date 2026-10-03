@@ -524,6 +524,21 @@ def test_imdb_dataset_update_and_lookup(tmp_path: Path, media: Path) -> None:
         assert imdb["Twin Peaks"] == {"id": "tt0098936"}  # 数据集中没有
         assert imdb["The Emerald Forest"] == {"id": None}  # TMDB 中没有 IMDb 编号（模拟的详情取不到）
 
+        # 粘贴 IMDb 链接：TMDB 中有的按 IMDb 编号找到
+        found = client.get("/api/tmdb/search", params={"q": "https://www.imdb.com/title/tt0091251/"}).json()["results"]
+        assert [(r["kind"], r["title"], r["imdb"]["title"]) for r in found] == [("movie", "Come and See", "Come and See")]
+        # TMDB 中没有的（例如 Непобедимые）：只用 IMDb 数据集
+        found = client.get("/api/tmdb/search", params={"q": "tt0079944"}).json()["results"]
+        assert [(r["kind"], r["title"], r["imdb_id"]) for r in found] == [("imdb", "Stalker", "tt0079944")]
+        detail = client.get("/api/imdb/title/tt0079944", params={"disc": "DVD5"}).json()
+        assert (detail["source"], detail["ptp_name"], detail["url"]) == ("IMDb", "Stalker.1979.DVD5", None)
+        assert "TMDB 中没有这部片" in detail["notes"][0]
+        assert client.get("/api/imdb/title/tt0000009").status_code == 404
+        assert client.get("/api/tmdb/search", params={"q": "tt0000009"}).json()["results"] == []
+        # TMDB 的条目没有 IMDb 编号时，可以用 imdb 参数指定
+        detail = client.get("/api/tmdb/movie/25237", params={"imdb": "tt0083658"}).json()
+        assert (detail["source"], detail["title"], detail["imdb_id"]) == ("IMDb", "Blade Runner", "tt0083658")
+
         # 数据集中没有的：退回 TMDB 并说明
         detail = client.get("/api/tmdb/tv/1920").json()
         assert detail["source"] == "TMDB" and "数据集中没有 tt0098936" in detail["notes"][0]
