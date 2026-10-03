@@ -1474,8 +1474,16 @@ function releaseRow(r, s) {
   if (r.status === "done" && r.output_dir) {
     extra.push(h("p", { class: "release-path" }, `输出：${r.output_dir}${r.post_file ? `/${r.post_file}` : ""}`));
   }
+  // 本地 IMDb 数据集中的匹配（同自动改名：唯一一个年份对得上的才算找到）；没有数据集时不显示
+  let imdb = null;
+  if (r.imdb && r.imdb.id) {
+    imdb = h("a", { class: "release-imdb", href: `https://www.imdb.com/title/${r.imdb.id}/`, target: "_blank", rel: "noopener noreferrer", title: r.imdb.reason },
+      `IMDb ${r.imdb.id} · ${r.imdb.title}${r.imdb.year ? ` (${r.imdb.year})` : ""}`);
+  } else if (r.imdb) {
+    imdb = h("span", { class: "release-imdb missing" }, `IMDb：${r.imdb.reason}`);
+  }
   return h("li", { class: "release" },
-    h("div", { class: "info" }, title, h("div", { class: "release-facts" }, facts.map((f) => h("span", {}, f))),
+    h("div", { class: "info" }, title, h("div", { class: "release-facts" }, facts.map((f) => h("span", {}, f))), imdb,
       notes.length ? h("div", { class: "chips" }, notes) : null, ...extra),
     h("div", { class: "side" }, side));
 }
