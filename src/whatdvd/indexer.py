@@ -54,10 +54,27 @@ UNCATEGORIZED_INDEXERS = frozenset({"rutor"})
 """Jackett 中不区分分类的站点（定义文件里写明 RuTor 的搜索结果页不显示分类）。"""
 
 
+# 站点自己的分类（Jackett 中 100000 以上，各站点不同）：kinozal 把演唱会、体育、戏剧歌剧芭蕾、综艺节目
+# 也归在“电影”（2000）下，只能按它自己的分类排除
+SITE_NON_FILM = {
+    "kinozal": frozenset({
+        100048,  # Movies - Concerts
+        100037,  # Movies - Sport
+        100038,  # Movies - Theatre, Opera, Ballet
+        100049,  # Movies - Shows / TV Shows
+        100050,  # Movies - TV Show Mir
+    }),
+}
+
+
 def is_film(release: Release) -> bool:
-    """影视类：电影（2000–2999）或电视（5000–5999，体育 5060 除外）。不区分分类的站点全部保留。"""
+    """影视类：电影（2000–2999）或电视（5000–5999，体育 5060 除外），去掉站点自己标为演唱会、体育等的。
+    不区分分类的站点全部保留。"""
     if release.indexer_id in UNCATEGORIZED_INDEXERS:
         return True
+    for site, excluded in SITE_NON_FILM.items():  # Jackett 中的 id："kinozal"、"kinozal-magnet"
+        if release.indexer_id.startswith(site) and excluded.intersection(release.categories):
+            return False
     return any(2000 <= c < 3000 or (5000 <= c < 6000 and c != TV_SPORT) for c in release.categories)
 
 
@@ -208,9 +225,9 @@ _STRIPPED = re.compile(
 )
 
 _EXCLUDE = [
-    (re.compile(r"custom|кастом", re.IGNORECASE), "Custom（改制过的盘）"),
+    (re.compile(r"custom|[кk]аст[оo]м", re.IGNORECASE), "Custom（改制过的盘）"),
     (_STRIPPED, "删掉了菜单或花絮的盘，不是完整的原盘"),
-    (re.compile(r"сжат", re.IGNORECASE), "压缩过的盘（сжатый）"),
+    (re.compile(r"[сc]жат", re.IGNORECASE), "压缩过的盘（сжатый）"),
     (re.compile(r"реставр", re.IGNORECASE), "修复版（Реставрация），不是原盘"),
     # rutracker 写明来源的转制盘："Betacam SP > DVD5"、"VHS > DVD9"、"LD > DVD5"
     (re.compile(r">\s*DVD", re.IGNORECASE), "从其他来源转制成的 DVD（“… > DVD”），不是原盘"),
@@ -298,9 +315,9 @@ def inspect_contents(name: str, files: list[str]) -> str | None:
 _RELEASE_FIELD = re.compile(r"(Тип релиза|Качество видео|Качество|Release type|Quality)\s*:\s*([^:]{0,60})", re.IGNORECASE)
 _FIELD_END = re.compile(r"\s+[A-ZА-ЯЁ][\w() /-]{1,40}$")  # 值后面紧跟的下一个字段名
 _RELEASE_BAD = [
-    (re.compile(r"custom|кастом", re.IGNORECASE), "Custom（改制过的盘）"),
+    (re.compile(r"custom|[кk]аст[оo]м", re.IGNORECASE), "Custom（改制过的盘）"),
     (_STRIPPED, "删掉了菜单或花絮的盘"),
-    (re.compile(r"сжат", re.IGNORECASE), "压缩过的盘（сжатый）"),
+    (re.compile(r"[сc]жат", re.IGNORECASE), "压缩过的盘（сжатый）"),
     (re.compile(r"реставр", re.IGNORECASE), "修复版（Реставрация）"),
     (re.compile(r"рип|rip\b|remux|ремукс|пересоб|rebuil", re.IGNORECASE), "重新压制或封装过的，不是 DVD 原盘"),
 ]

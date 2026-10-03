@@ -40,8 +40,17 @@ def _gz(lines: list[str]) -> bytes:
     return gzip.compress(("\n".join(lines) + "\n").encode())
 
 
-def _transport(basics: list[str] = BASICS, status: int = 200, akas: list[str] = AKAS) -> httpx.MockTransport:
-    files = {"/title.basics.tsv.gz": _gz(basics), "/title.akas.tsv.gz": _gz(akas)}
+RATINGS = [
+    "tconst\taverageRating\tnumVotes",
+    "tt0091251\t8.4\t100000",
+    "tt0083658\t8.1\t850000",
+]
+
+
+def _transport(
+    basics: list[str] = BASICS, status: int = 200, akas: list[str] = AKAS, ratings: list[str] = RATINGS
+) -> httpx.MockTransport:
+    files = {"/title.basics.tsv.gz": _gz(basics), "/title.akas.tsv.gz": _gz(akas), "/title.ratings.tsv.gz": _gz(ratings)}
 
     def handler(request: httpx.Request) -> httpx.Response:
         if status != 200:
@@ -61,7 +70,7 @@ def dataset(tmp_path: Path) -> ImdbDataset:
     stats = build(path, lambda phase, done, total: phases.append(phase), base_url="https://imdb.test",
                   transport=_transport())
     assert stats["titles"] == 6 and stats["english_titles"] == 3  # 短片和单集不要
-    assert phases[0].startswith("下载并导入 title.basics") and "title.akas" in phases[-2] and phases[-1] == "整理数据"
+    assert phases[0].startswith("下载并导入 title.basics") and "title.ratings" in phases[-2] and phases[-1] == "整理数据"
     return ImdbDataset(path)
 
 
@@ -186,6 +195,73 @@ SAME_NAME = [
     "tt3855900\ttvMiniSeries\tInferno\tInferno\t0\t2016\t\\N\t\\N\tDrama",
     "tt9149142\tmovie\tInferno\tInferno\t0\t2017\t\\N\t\\N\tDrama",
 ]
+
+
+MORE = [
+    "tt0460681\ttvSeries\tSupernatural\tSupernatural\t0\t2005\t2020\t44\tDrama",
+    "tt3508984\tmovie\tSupernatural\tSupernatural\t0\t2014\t\\N\t\\N\tDrama",
+    "tt1853739\tmovie\tYou're Next\tYou're Next\t0\t2011\t\\N\t95\tHorror",
+    "tt3976228\ttvSeries\tYou're Next\tYou're Next\t0\t2014\t\\N\t\\N\tComedy",
+    "tt0089369\tmovie\tSolo Voyage\tIm Alleingang\t0\t1985\t\\N\t\\N\tDrama",
+    "tt3480796\tmovie\tVice\tVice\t0\t2015\t\\N\t96\tAction",
+    "tt6266538\tmovie\tVice\tVice\t0\t2018\t\\N\t132\tDrama",
+    "tt3693866\ttvSeries\tWeekend\tWeekend\t0\t2014\t\\N\t\\N\tComedy",
+    "tt0105236\tmovie\tReservoir Dogs\tReservoir Dogs\t0\t1992\t\\N\t99\tCrime",
+    "tt9000002\tvideo\tReservoir Dogs: Sundance Institute 1991\tReservoir Dogs: Sundance Institute 1991\t0\t1991\t\\N\t\\N\tShort",
+    "tt4183002\tmovie\tWeekend\tUik-end\t0\t2013\t\\N\t\\N\tCrime",
+    "tt0209958\tmovie\tThe Cell\tThe Cell\t0\t2000\t\\N\t107\tHorror",
+    "tt0057394\tmovie\tPacsirta\tPacsirta\t0\t1964\t\\N\t\\N\tDrama",
+    "tt0314947\tmovie\tZhavoronok\tZhavoronok\t0\t1965\t\\N\t\\N\tWar",
+    "tt0115083\ttvSeries\t7th Heaven\t7th Heaven\t0\t1996\t2007\t60\tDrama",
+    "tt18686556\ttvMiniSeries\tSedmoye nebo\tSedmoye nebo\t0\t2006\t2006\t\\N\tDrama",
+]
+VOTES = [*RATINGS, "tt2562232\t7.7\t700000", "tt5130912\t6.0\t12", "tt0460681\t8.4\t500000",
+         "tt3508984\t5.0\t108", "tt1853739\t6.5\t110000", "tt3976228\t7.0\t20", "tt3480796\t4.2\t20000",
+         "tt6266538\t7.1\t200000", "tt1798709\t8.0\t700000", "tt3512038\t7.0\t15"]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        # 靠别名对上的电影和同名 video：票数差得再多也不选（Saving Santa 该选 video，而电影的票数同样多得多）
+        ("Бёрдмэн / Birdman (2014) DVD9", None),
+        ("Бешеные псы / Reservoir Dogs [1991, США, DVD9]", "tt0105236"),  # 片名本身对上的电影（IMDb 记 1992 年）
+        ("Сверхъестественное / Supernatural [S10] (2015) DVD5", "tt0460681"),  # 按季发布：开播年份的剧集
+        ("Тебе конец! / You're Next (2013) DVD5", None),  # 年份只对得上同名剧集，2011 年的电影有名得多
+        ("Добро пожаловать в рай / Vice (2015) DVD9", "tt3480796"),  # 年份完全一致：不因 2018 年那部更有名就不选
+        ("Одиночное плавание / Im Alleingang / Solo Voyage (1985) DVD9", "tt0089369"),  # 第一个名字找不到，试下一个
+        ("Она / Her (2013) DVD9", "tt1798709"),
+        ("Уик-энд / Weekend (2014) DVD5", "tt4183002"),  # 没有季标记：不要同年的同名剧集
+        # 只有俄文名：不要俄文译名恰好相同的外国片
+        ("Жаворонок (1964) DVD5", "tt0314947"),  # 苏联的 Zhavoronok，不是匈牙利的 Pacsirta（俄文名也叫“Жаворонок”）
+        ("Седьмое небо [01-04 из 04] (2006) DVD9", "tt18686556"),  # 转写 Sedmoe / IMDb 写 Sedmoye
+        ("Клетка [01-04 из 04] (2001) DVD9", None),  # 剧集：IMDb 上对不上剧集，不选同名电影 The Cell
+    ],
+)
+def test_confident_with_votes(tmp_path: Path, text: str, expected: str | None) -> None:
+    akas = [*AKAS, "tt2562232\t1\tBirdman\tUS\t\\N\timdbDisplay\t\\N\t0",
+            "tt0057394\t1\tЖаворонок\tRU\t\\N\timdbDisplay\t\\N\t0",
+            "tt0115083\t1\tСедьмое небо\tRU\t\\N\timdbDisplay\t\\N\t0",
+            "tt18686556\t1\tСедьмое небо\tRU\t\\N\timdbDisplay\t\\N\t0",
+            "tt0209958\t1\tКлетка\tRU\t\\N\timdbDisplay\t\\N\t0",
+            "tt9000002\t1\tReservoir Dogs\tUS\t\\N\t\\N\t\\N\t0"]
+    build(tmp_path / "imdb.db", lambda *a: None, base_url="https://imdb.test",
+          transport=_transport([*BASICS, *SAME_NAME, *MORE], akas=akas, ratings=VOTES))
+    hit, reason = ImdbDataset(tmp_path / "imdb.db").confident(text)
+    assert (hit.imdb_id if hit else None) == expected, reason
+
+
+def test_old_dataset_without_votes(tmp_path: Path) -> None:
+    """旧版本导入的数据集没有投票人数和结束年份：照常能查。"""
+    import sqlite3
+
+    path = tmp_path / "imdb.db"
+    build(path, lambda *a: None, base_url="https://imdb.test", transport=_transport())
+    with sqlite3.connect(path) as db:
+        db.execute("ALTER TABLE titles DROP COLUMN votes")
+        db.execute("ALTER TABLE titles DROP COLUMN end_year")
+    hit, _ = ImdbDataset(path).confident("Иди и смотри (1985) DVD9")
+    assert hit is not None and hit.imdb_id == "tt0091251" and hit.votes == 0
 
 
 @pytest.mark.parametrize(

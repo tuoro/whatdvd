@@ -144,3 +144,50 @@ def test_folder_reflects_title(folder: str, titles: list[str], reflects: bool) -
     from whatdvd.release_names import folder_reflects_title
 
     assert folder_reflects_title(folder, titles) is reflects
+
+
+def test_guess_queries_all_names() -> None:
+    from whatdvd.release_names import guess_queries
+
+    assert guess_queries("Одиночное плавание / Im Alleingang / Solo Voyage (1985) DVD9") == (
+        ["Im Alleingang", "Solo Voyage", "Одиночное плавание"], 1985)
+    assert guess_queries("The.Emerald.Forest.1985.PAL.DVD9") == (["The Emerald Forest"], 1985)
+
+
+@pytest.mark.parametrize(
+    ("text", "queries"),
+    [
+        # kinozal：俄文名和原名之间没有斜杠
+        ("Дюплекс Duplex 2003 DUB, Sub DVD-9", ["Duplex", "Дюплекс"]),
+        ("BBC: Жизнь в микромире Life in the undergrowth - E5 - 2005 VO, Sub 2 x DVD-9",
+         ["Life in the undergrowth", "BBC: Жизнь в микромире"]),
+        ("А был ли Каротин - E2 - 1989 РУ DVD-9", ["А был ли Каротин"]),
+        # rutracker：斜杠只有一边有空格；季、集、碟号不是片名
+        ("ДИСКИ 12 и 13 из 13 (V.Ray release) Твин Пикс [DVD9] S2E20-22 + диск допами/ Twin Peaks [1990, США, DVD9]",
+         ["Twin Peaks", "Твин Пикс"]),
+        ("Смешарики. Выпуск 7. Футбол / Смешарики / S1E8 of 216 (Денис Чернов) [2006, Россия, DVD5]",
+         ["Смешарики. Футбол", "Смешарики", "Смешарики. Футбол Смешарики"]),
+        ("Вершина Денали 3Д / Up Denali 3D [2006, документальный, DVD5]", ["Up Denali 3D", "Вершина Денали 3Д"]),
+        # 已经有斜杠分开的原名时，俄文名里的拉丁字母不拆出来
+        ("Гангста Love / Rob the Mob (2014) DVD5", ["Rob the Mob", "Гангста Love"]),
+        ("Голодные игры: Сойка-пересмешница. Часть II / The Hunger Games: Mockingjay - Part 2 (2015) DVD9",
+         ["The Hunger Games: Mockingjay - Part 2", "Голодные игры: Сойка-пересмешница. Часть II"]),
+        ("Частная жизнь Генриха VIII The Private Life Of Henry VIII 1933 DVO DVD-5",
+         ["The Private Life Of Henry VIII", "Частная жизнь Генриха VIII"]),
+        ("Я возьму эту женщину I Take This Woman 1940 AVO (Яковлев) DVD-5", ["I Take This Woman", "Я возьму эту женщину"]),
+        ("В 3:10 на Юму 3:10 to Yuma 1957 MVO DVD-5", ["3:10 to Yuma", "to Yuma", "В 3:10 на Юму 3:10"]),
+        ("Терминатор 2 Terminator 2: Judgment Day 1991 DVD-9",
+         ["2 Terminator 2: Judgment Day", "Terminator 2: Judgment Day", "Терминатор 2"]),
+        # kinozal：年份范围取第一个，集数范围整个去掉
+        ("Русь изначальная  - E2 - 1985-1986  РУ, Sub DVD-9", ["Русь изначальная"]),
+        ("В поисках капитана Гранта  - E1-7 - 1985  РУ 3 x DVD-9", ["В поисках капитана Гранта"]),
+        ("Черепашки мутанты ниндзя  Teenage Mutant Ninja Turtles - S1-9E1-183 - 1987-1995  MVO DVD-9 + 7 x DVD-5",
+         ["Teenage Mutant Ninja Turtles", "Черепашки мутанты ниндзя"]),
+        ("Энтузиазм / Симфония Донбасса [1930, документальное, DVD9]",
+         ["Энтузиазм", "Симфония Донбасса", "Энтузиазм Симфония Донбасса"]),
+    ],
+)
+def test_guess_queries_tracker_formats(text: str, queries: list[str]) -> None:
+    from whatdvd.release_names import guess_queries
+
+    assert guess_queries(text)[0] == queries

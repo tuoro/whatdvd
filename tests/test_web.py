@@ -869,6 +869,9 @@ def test_release_filters_and_paging(tmp_path: Path, media: Path) -> None:
         assert (found["id"], found["title"], found["year"]) == ("tt0091251", "Come and See", 1985)
         missing = client.get("/api/releases?q=Неизвестный").json()["releases"][0]["imdb"]
         assert missing["id"] is None and "没有" in missing["reason"]
+        # 只看 IMDb 找得到的
+        assert ids("imdb=true") == ["d"]
+        assert client.get("/api/releases?imdb=true").json()["imdb_dataset"] is True
 
         response = client.post("/api/releases/backfill")
         assert response.status_code == 202 and response.json()["total"] > 100

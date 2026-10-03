@@ -78,6 +78,8 @@ def test_search_films_only() -> None:
         + _film_item("sport", "rutracker", 5060, 100283)
         + _film_item("game-bonus", "rutracker", 8000, 100003)
         + _film_item("rutor", "rutor", 8000, 100003)
+        + _film_item("kinozal-film", "kinozal-magnet", 2000, 100008)
+        + _film_item("kinozal-concert", "kinozal-magnet", 2000, 100048)  # kinozal 把演唱会也归在电影下
         + "</channel></rss>"
     )
 
@@ -87,10 +89,10 @@ def test_search_films_only() -> None:
 
     transport = httpx.MockTransport(handler)
     films = Jackett("http://jackett:9117", "KEY", films_only=True, transport=transport).search("DVD9")
-    assert [r.guid for r in films] == ["movie", "series", "rutor"]
+    assert [r.guid for r in films] == ["movie", "series", "rutor", "kinozal-film"]
     assert films[0].categories == (2070, 100101) and films[0].indexer_id == "rutracker"
     everything = Jackett("http://jackett:9117", "KEY", transport=transport).search("DVD9")
-    assert len(everything) == 5
+    assert len(everything) == 7
     assert seen == ["2000,5000,8000", None]
 
 
@@ -154,6 +156,7 @@ def test_fetch_torrent_and_magnet_redirect() -> None:
         ("Фильм / Film (2002) DVD9 | D, P | Custom | iTunes", "Custom"),
         ("Фильм / Film (2005) DVD5 | P2-сжатый", "压缩过的盘"),
         ("Фильм / Film (2002) DVD5-Сжатый", "压缩过的盘"),
+        ("Аватар / Avatar (2009) DVD5 by Allep | Cжатый", "压缩过的盘"),  # 拉丁字母 C 冒充的
         ("Фильм (1947) DVD5-Реставрация", "修复版"),
         ("Фильм / Film (2004) DVD5 | без меню", "删掉了菜单或花絮"),
         ("Фильм / Film (2004) DVD9 | Без доп. материалов", "删掉了菜单或花絮"),

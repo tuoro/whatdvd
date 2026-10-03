@@ -649,11 +649,13 @@ def create_app(
         kind: Literal["", "DVD9", "DVD5", "multi"] = "",
         seeded: bool = False,
         clean: bool = False,
+        imdb: bool = False,
         offset: Annotated[int, Query(ge=0)] = 0,
         limit: Annotated[int, Query(ge=1, le=200)] = 50,
     ) -> dict[str, Any]:
         """q：标题中包含的文字（不区分大小写）；kind：DVD9 / DVD5 单盘或 multi 多盘；
-        seeded：只看有做种者的；clean：只看没有提示的。"""
+        seeded：只看有做种者的；clean：只看没有提示的；imdb：只看在 IMDb 数据集中找得到的（音乐会、合辑、培训等
+        IMDb 上没有，也包括“只要影视类”打开之前存下的旧候选）。"""
         current = get_watcher()
         counts = {name: len(current.store.list(statuses)) for name, statuses in RELEASE_GROUPS.items()}
         records = current.store.list(RELEASE_GROUPS[group])
@@ -668,6 +670,13 @@ def create_app(
             records = [r for r in records if r.seeders]
         if clean:
             records = [r for r in records if not r.warnings]
+        if imdb:  # 第一次要查全部候选（每条约 0.5 毫秒），之后用缓存
+            def found(title: str) -> bool:
+                match = release_imdb(title)
+                return bool(match and match["id"])
+
+            keep = await asyncio.to_thread(lambda: [found(r.title) for r in records])
+            records = [r for r, ok in zip(records, keep, strict=True) if ok]
         releases = [r.public() for r in records[offset : offset + limit]]
         # 本地 IMDb 数据集中的匹配（同自动改名的规则），只查这一页
         matches = await asyncio.to_thread(lambda: [release_imdb(r["title"]) for r in releases])
@@ -678,6 +687,7 @@ def create_app(
             "total": len(records),
             "counts": counts,
             "status": current.status(),
+            "imdb_dataset": imdb_dataset().path.is_file(),
         }
 
     @app.post("/api/releases/refresh", dependencies=auth)

@@ -1279,7 +1279,7 @@ function scheduleReleasePoll(group, busy) {
 const RELEASE_PAGE = 50;
 
 function releaseFilter() {
-  state.releaseFilter = state.releaseFilter || { q: "", kind: "", seeded: false, clean: false, page: 0 };
+  state.releaseFilter = state.releaseFilter || { q: "", kind: "", seeded: false, clean: false, imdb: false, page: 0 };
   return state.releaseFilter;
 }
 
@@ -1293,6 +1293,7 @@ async function showReleases(group, quiet = false, force = false) {
   if (f.kind) params.set("kind", f.kind);
   if (f.seeded) params.set("seeded", "true");
   if (f.clean) params.set("clean", "true");
+  if (f.imdb) params.set("imdb", "true");
   const data = await api(`/api/releases?${params}`);
   if (!state.route || state.route.name !== "releases" || state.route.group !== group) return;
   // 轮询刷新时，不打断正在操作的按钮和正在输入的筛选框
@@ -1404,6 +1405,7 @@ function releaseFilterBar(group, data) {
   };
   const shown = data.total === data.counts[group] ? `共 ${data.total} 个` : `筛选出 ${data.total} 个，共 ${data.counts[group]} 个`;
   return h("div", { class: "release-filter" }, q, kind, check("seeded", "有做种者"), check("clean", "没有提示"),
+    data.imdb_dataset ? h("span", { title: "只看在 IMDb 数据集中找得到的（隐藏音乐会、合辑、培训等，也会隐藏 IMDb 上对不上的冷门片）" }, check("imdb", "IMDb 找得到")) : null,
     h("span", { class: "filter-count" }, shown));
 }
 
