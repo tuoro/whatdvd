@@ -822,6 +822,7 @@ function renderResult(job) {
 
   for (const disc of result.discs) {
     for (const warning of disc.warnings || []) nodes.push(notice("warn", `${disc.name || disc.label}：${warning}`));
+    for (const note of disc.notes || []) nodes.push(notice("", `${disc.name || disc.label}：${note}`));
   }
   const shots = result.discs.flatMap((d) => d.screenshots || []);
   nodes.push(h("p", { class: "summary" },

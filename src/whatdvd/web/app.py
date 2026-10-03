@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-from ..compliance import added_dub_warning
+from ..compliance import added_dub_warning, long_dvd5_note
 from ..dvd import DVD5_MAX_BYTES, ScanError
 from ..post import DEFAULT_TEMPLATE
 from ..runner import Runner, SubprocessRunner
@@ -267,6 +267,9 @@ def _serialize_run(result: RunResult) -> dict[str, Any]:
                 item["warnings"] = [warning] if warning else []
             names += [shot.path.name for shot in disc.output.shots if shot.ok]
             names.append(disc.output.mediainfo.name)
+        if disc.analysis is not None:  # 长片放在一张 DVD5 上：可能压缩过（说明性提醒）
+            note = long_dvd5_note(disc.analysis.disc.media_type, disc.analysis.disc.title_duration)
+            item["notes"] = [note] if note else []
         discs.append(item)
 
     post_file = post_text = None
@@ -987,6 +990,8 @@ def create_app(
         for disc in serialized["discs"]:
             for warning in disc.get("warnings", []):
                 reporter.error(f"[{disc.get('name') or disc['label']}] {warning}")
+            for note in disc.get("notes", []):
+                reporter.info(f"[{disc.get('name') or disc['label']}] {note}")
         if names:
             reporter.info(f"BHD 标题：{names['bhd']}")
         return {**serialized, "seed_path": str(path), "names": names}

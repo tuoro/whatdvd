@@ -62,3 +62,17 @@ def added_dub_warning(report: str) -> str | None:
         return (f"有 {len(russian)} 条俄语音轨，另有原声（{languages}）：多半是给外国片加了俄语配音的 Custom 盘，"
                 "发布前请确认（PTP、BHD 都只收未改动的原盘）")
     return None
+
+
+LONG_DVD5_MINUTES = 110
+"""2026 年 10 月用 rutor 上的单张 DVD5 电影统计（片长取发布页的“Продолжительность”）：110 分钟以上的，
+标题写明压缩过（сжатый）的 67 个，普通的 29 个；更短的普通盘占多数。只能说明“值得留意”：俄罗斯正版盘
+也常把长片放在单层盘上。界限先用 110 分钟，积累了真实的盘再调。"""
+
+
+def long_dvd5_note(media_type: str, title_seconds: float | None) -> str | None:
+    """主片很长却放在一张 DVD5 上：可能是从 DVD9 压缩过来的（说明性提醒，不是警告）。"""
+    if media_type != "DVD5" or not title_seconds or title_seconds < LONG_DVD5_MINUTES * 60:
+        return None
+    return (f"主片 {round(title_seconds / 60)} 分钟，放在一张 DVD5 上，可能是从 DVD9 压缩过的（сжатый），"
+            "请对照这部片正版 DVD 的信息确认。俄罗斯正版盘也常把长片放在单层盘上，这条只是提醒")

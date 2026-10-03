@@ -38,3 +38,22 @@ def test_added_dub_warning(languages: list[str | None], warns: bool) -> None:
     assert (warning is not None) is warns
     if warning:
         assert "Custom" in warning and f"{languages.count('Russian')} 条俄语音轨" in warning
+
+
+@pytest.mark.parametrize(
+    ("media_type", "minutes", "noted"),
+    [
+        ("DVD5", 125, True),
+        ("DVD5", 110, True),
+        ("DVD5", 109, False),
+        ("DVD9", 180, False),  # 双层盘放长片是正常的
+        ("DVD5", None, False),  # IFO 读不出时长
+    ],
+)
+def test_long_dvd5_note(media_type: str, minutes: int | None, noted: bool) -> None:
+    from whatdvd.compliance import long_dvd5_note
+
+    note = long_dvd5_note(media_type, minutes * 60 if minutes else None)
+    assert (note is not None) is noted
+    if note:
+        assert f"主片 {minutes} 分钟" in note
