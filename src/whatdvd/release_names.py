@@ -36,7 +36,8 @@ def guess_query(text: str) -> tuple[str, int | None]:
     year = int(found.group(1)) if found else None
     head = text[: found.start()] if found and found.start() > 0 else text
     head = re.split(r"\s*\|\s*", head)[0]
-    head = re.sub(r"\([^()]*\)|\[[^\[\]]*\]", " ", head)  # 括号里是别名或说明："Непобедимые (Ленинградцы)"
+    # 单独的括号是别名或说明（"Непобедимые (Ленинградцы)"）；贴着单词的不是（"(m)eines"）
+    head = re.sub(r"(?<!\S)\([^()]*\)(?!\S)|\[[^\[\]]*\]", " ", head)
     head = re.sub(r"[\[\](){}]", " ", head)
     segments = [s.strip() for s in head.split(" / ") if s.strip()] or [head]
     latin = [s for s in segments if re.search(r"[A-Za-z]", s) and not re.search(r"[А-Яа-яЁё]", s)]
@@ -44,6 +45,31 @@ def guess_query(text: str) -> tuple[str, int | None]:
     query = _NOISE.sub(" ", query)
     query = re.sub(r"\s+", " ", query).strip(" -–_.,")
     return query, year
+
+
+# 俄文转写成 IMDb 的写法（IMDb 的苏联、俄罗斯片名大多是这种拉丁字母转写）："Долгая дорога в дюнах" → "Dolgaya doroga v dyunakh"
+_TRANSLIT = str.maketrans({
+    "а": "a", "б": "b", "в": "v", "г": "g", "д": "d", "е": "e", "ё": "yo", "ж": "zh", "з": "z", "и": "i", "й": "y",
+    "к": "k", "л": "l", "м": "m", "н": "n", "о": "o", "п": "p", "р": "r", "с": "s", "т": "t", "у": "u", "ф": "f",
+    "х": "kh", "ц": "ts", "ч": "ch", "ш": "sh", "щ": "shch", "ъ": "", "ы": "y", "ь": "", "э": "e", "ю": "yu",
+    "я": "ya", "і": "i", "ї": "yi", "є": "ye", "ґ": "g",
+})
+
+
+def transliterate(text: str) -> str:
+    return text.lower().translate(_TRANSLIT)
+
+
+def search_variants(query: str) -> list[str]:
+    """按片名在 IMDb 数据集中查找时依次尝试的写法：原样、俄文转写、去掉副标题（". Special Edition"、": ……"）。"""
+    variants = [query]
+    if re.search(r"[А-Яа-яЁёІіЇїЄєҐґ]", query):
+        variants.append(transliterate(query))
+    for text in list(variants):
+        short = re.split(r"\s*[.:]\s+", text, maxsplit=1)[0]  # 不按 " - " 切：那通常是“艺人 - 专辑”
+        if short != text and len(short) >= 3:
+            variants.append(short)
+    return list(dict.fromkeys(v.strip() for v in variants if v.strip()))
 
 
 def disc_kind(media_types: Sequence[str]) -> str:

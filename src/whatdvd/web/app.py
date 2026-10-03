@@ -768,6 +768,10 @@ def create_app(
                 finally:
                     client.close()
             ids: list[str | None] = [imdb_id] * len(matches)
+        elif not cfg().tmdb_api_key:
+            if not dataset.path.is_file():
+                raise HTTPException(400, "请先在设置页面填写 TMDB API Key 或下载 IMDb 数据集")
+            matches, ids = [], []  # 没有 TMDB：只按片名查 IMDb 数据集（在下面）
         else:
             client = tmdb_client()
             try:
@@ -788,15 +792,25 @@ def create_app(
             found = await asyncio.to_thread(dataset.title, imdb_id, match.original_language) if imdb_id else None
             imdb = {"id": imdb_id, "title": found.title, "year": found.year} if found else {"id": imdb_id}
             results.append({**match.public(), "imdb_id": imdb_id, "imdb": imdb})
-        if imdb_match and not results:
-            found = await asyncio.to_thread(dataset.title, imdb_match.group(1))
-            if found is not None:  # TMDB 中没有，只用 IMDb 数据集
+        # IMDb 数据集中按编号或片名找到、而 TMDB 结果里没有的，也列出来（TMDB 漏掉的片、没有 TMDB API Key 时）
+        if imdb_match:
+            hit = await asyncio.to_thread(dataset.title, imdb_match.group(1))
+            extra = [hit] if hit is not None and not results else []
+        else:
+            extra = await asyncio.to_thread(dataset.find, q, year)
+        known = {r["imdb_id"] for r in results}
+        for hit in extra:
+            if hit.imdb_id not in known:
                 results.append({
-                    "kind": "imdb", "id": None, "title": found.title, "original_title": found.original_title,
-                    "year": found.year, "imdb_id": found.imdb_id, "url": None,
-                    "imdb": {"id": found.imdb_id, "title": found.title, "year": found.year},
+                    "kind": "imdb", "id": None, "imdb_kind": hit.kind, "title": hit.title,
+                    "original_title": hit.original_title, "year": hit.year, "imdb_id": hit.imdb_id, "url": None,
+                    "imdb": {"id": hit.imdb_id, "title": hit.title, "year": hit.year},
                 })
-        return {"results": results, "dataset": dataset.path.is_file()}
+        info = await asyncio.to_thread(dataset.info)
+        notes = []
+        if info is not None and not info["searchable"]:
+            notes.append("IMDb 数据集是旧版本导入的，不能按片名查找。请在设置页面点“更新数据集”。")
+        return {"results": results, "dataset": info is not None, "notes": notes}
 
     async def site_names(match: Match | None, imdb_id: str | None, disc: str) -> dict[str, Any]:
         """片名以 IMDb 数据集为准（PTP 要求和 IMDb 一致），没有时用 TMDB 的；给出 PTP 发种名称和 BHD 标题开头。"""

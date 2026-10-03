@@ -507,7 +507,7 @@ def test_imdb_dataset_update_and_lookup(tmp_path: Path, media: Path) -> None:
         while client.get("/api/imdb").json()["update"]["running"] and time.monotonic() < deadline:
             time.sleep(0.05)
         status = client.get("/api/imdb").json()
-        assert status["update"]["error"] is None and status["info"]["titles"] == 4
+        assert status["update"]["error"] is None and status["info"]["titles"] == 5
 
         # FakeTmdb 中 25237 的 IMDb 编号是 tt0091251，数据集中有：名字以 IMDb 为准
         detail = client.get("/api/tmdb/movie/25237", params={"disc": "DVD9"}).json()
@@ -523,6 +523,12 @@ def test_imdb_dataset_update_and_lookup(tmp_path: Path, media: Path) -> None:
         assert imdb["Come and See"] == {"id": "tt0091251", "title": "Come and See", "year": 1985}
         assert imdb["Twin Peaks"] == {"id": "tt0098936"}  # 数据集中没有
         assert imdb["The Emerald Forest"] == {"id": None}  # TMDB 中没有 IMDb 编号（模拟的详情取不到）
+
+        # 按片名查时，IMDb 数据集中找到而 TMDB 结果里没有的也列出来
+        found = client.get("/api/tmdb/search", params={"q": "Два капитана 2", "year": 1992}).json()
+        extra = [r for r in found["results"] if r["kind"] == "imdb"]
+        assert [(r["imdb_id"], r["imdb_kind"], r["title"]) for r in extra] == [("tt0183022", "movie", "Dva kapitana II")]
+        assert found["notes"] == []
 
         # 粘贴 IMDb 链接：TMDB 中有的按 IMDb 编号找到
         found = client.get("/api/tmdb/search", params={"q": "https://www.imdb.com/title/tt0091251/"}).json()["results"]
@@ -542,6 +548,33 @@ def test_imdb_dataset_update_and_lookup(tmp_path: Path, media: Path) -> None:
         # 数据集中没有的：退回 TMDB 并说明
         detail = client.get("/api/tmdb/tv/1920").json()
         assert detail["source"] == "TMDB" and "数据集中没有 tt0098936" in detail["notes"][0]
+
+
+def test_name_search_without_tmdb_key(tmp_path: Path, media: Path) -> None:
+    """没有 TMDB API Key 时按片名只查 IMDb 数据集；旧版本数据集提示更新。"""
+    import sqlite3
+
+    from test_imdb_dataset import _transport
+
+    from whatdvd.imdb_dataset import build
+
+    db = tmp_path / "state" / "imdb.db"
+    build(db, lambda *a: None, base_url="https://imdb.test", transport=_transport())
+    config = ServerConfig(roots=(media.resolve(),), output_dir=tmp_path / "out", token=TOKEN,
+                          database=tmp_path / "state" / "whatdvd.db")
+    app = create_app(config, runner=FakeRunner())
+    with TestClient(app, headers={"Authorization": f"Bearer {TOKEN}"}) as client:
+        found = client.get("/api/tmdb/search", params={"q": "Иди и смотри", "year": 1985}).json()
+        assert [(r["kind"], r["imdb_id"], r["title"]) for r in found["results"]] == [("imdb", "tt0091251", "Come and See")]
+        detail = client.get("/api/imdb/title/tt0091251", params={"disc": "DVD9"}).json()
+        assert detail["ptp_name"] == "Come.and.See.1985.DVD9"
+
+        with sqlite3.connect(db) as conn:  # 模拟旧版本导入的数据集
+            conn.execute("DELETE FROM meta WHERE key = 'names_version'")
+        assert "旧版本" in client.get("/api/tmdb/search", params={"q": "x"}).json()["notes"][0]
+
+        db.unlink()
+        assert client.get("/api/tmdb/search", params={"q": "x"}).status_code == 400
 
 
 def test_imdb_update_error_is_reported(tmp_path: Path, media: Path) -> None:

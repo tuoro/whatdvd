@@ -454,6 +454,8 @@ function optionsRow() {
 
 // ---------- 查片名（TMDB）----------
 
+const IMDB_KIND = { movie: "电影", tvMovie: "电视电影", tvSeries: "剧集", tvMiniSeries: "迷你剧", tvSpecial: "特别节目", video: "录像" };
+
 // 搜索结果中的 IMDb 标注：编号，以及 IMDb 数据集中的名字和年份
 function imdbLine(imdb, hasDataset) {
   if (!imdb || !imdb.id) return h("span", { class: "imdb-mark missing" }, "没有 IMDb 编号");
@@ -466,8 +468,8 @@ function titlePanel(path, info) {
   if (!info.tmdb && !info.imdb_dataset) {
     return h("section", {}, heading, notice("", "在设置页面填写 TMDB API Key 或下载 IMDb 数据集后，可以在这里查片名，按英文名和原名给出 PTP 发种名称和 BHD 标题。"));
   }
-  const placeholder = info.tmdb ? "片名（英文、原名或俄文都可以），或粘贴 IMDb 链接" : "粘贴 IMDb 链接或编号（填写 TMDB API Key 后可以按片名搜）";
-  const query = h("input", { type: "search", value: info.tmdb ? info.guess.query : "", placeholder, spellcheck: "false" });
+  const placeholder = "片名（英文、原名或俄文都可以），或粘贴 IMDb 链接";
+  const query = h("input", { type: "search", value: info.guess.query, placeholder, spellcheck: "false" });
   const year = h("input", { type: "number", value: info.guess.year || "", placeholder: "年份", min: 1870, max: 2100 });
   const go = h("button", { type: "button", class: "btn small glass" }, icon("search"), "查 TMDB");
   const results = h("div", { class: "title-results" });
@@ -479,10 +481,11 @@ function titlePanel(path, info) {
       const params = new URLSearchParams({ q: query.value.trim() });
       if (year.value) params.set("year", year.value);
       const data = await api(`/api/tmdb/search?${params}`);
-      results.replaceChildren(...(data.results.length ? data.results.map((m) => {
+      const notes = (data.notes || []).map((n) => notice("warn", n));
+      results.replaceChildren(...notes, ...(data.results.length ? data.results.map((m) => {
         const pick = h("button", { type: "button", class: "title-option" },
           h("b", {}, `${m.title}${m.year ? ` (${m.year})` : ""}`),
-          h("span", {}, [{ tv: "剧集", movie: "电影", imdb: "TMDB 中没有，仅 IMDb 数据集" }[m.kind], m.original_title && m.original_title !== m.title ? m.original_title : null].filter(Boolean).join(" · ")),
+          h("span", {}, [m.kind === "imdb" ? `IMDb 数据集 · ${IMDB_KIND[m.imdb_kind] || "影视"}` : { tv: "剧集", movie: "电影" }[m.kind], m.original_title && m.original_title !== m.title ? m.original_title : null].filter(Boolean).join(" · ")),
           imdbLine(m.imdb, data.dataset));
         pick.addEventListener("click", () => choose(m, pick));
         return pick;
