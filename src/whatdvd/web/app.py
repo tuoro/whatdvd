@@ -668,8 +668,13 @@ def create_app(
             records = [r for r in records if r.seeders]
         if clean:
             records = [r for r in records if not r.warnings]
+        releases = [r.public() for r in records[offset : offset + limit]]
+        # 本地 IMDb 数据集中的匹配（同自动改名的规则），只查这一页
+        matches = await asyncio.to_thread(lambda: [release_imdb(r["title"]) for r in releases])
+        for release, match in zip(releases, matches, strict=True):
+            release["imdb"] = match
         return {
-            "releases": [r.public() for r in records[offset : offset + limit]],
+            "releases": releases,
             "total": len(records),
             "counts": counts,
             "status": current.status(),
@@ -895,6 +900,33 @@ def create_app(
 
     def imdb_dataset() -> ImdbDataset:
         return ImdbDataset(cfg().database.with_name("imdb.db"))
+
+    imdb_matches: dict[tuple[float, str], dict[str, Any]] = {}
+    imdb_searchable: dict[float, bool] = {}
+
+    def release_imdb(title: str) -> dict[str, Any] | None:
+        """候选资源在 IMDb 数据集中的匹配：只有唯一一个年份对得上的才算找到（同自动改名）。
+        按数据集版本缓存；没有数据集或数据集是不能按片名查找的旧版本时为 None。"""
+        dataset = imdb_dataset()
+        try:
+            version = dataset.path.stat().st_mtime
+        except OSError:
+            return None
+        key = (version, title)
+        if key not in imdb_matches:
+            if len(imdb_matches) > 50_000:
+                imdb_matches.clear()
+            if version not in imdb_searchable:  # 每个版本只检查一次能不能按片名查找
+                info = dataset.info()
+                imdb_searchable[version] = bool(info and info["searchable"])
+            if not imdb_searchable[version]:
+                return None
+            hit, reason = dataset.confident(title)
+            imdb_matches[key] = (
+                {"id": hit.imdb_id, "title": hit.title, "year": hit.year, "reason": reason}
+                if hit is not None else {"id": None, "reason": reason}
+            )
+        return imdb_matches[key]
 
     # ---------- IFO 统计（处理过的盘的 VIDEO_TS.IFO 头部，可导出 CSV） ----------
 

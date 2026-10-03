@@ -856,6 +856,20 @@ def test_release_filters_and_paging(tmp_path: Path, media: Path) -> None:
         assert data["status"]["backfill"] == {"running": False, "done": 0, "total": 0, "added": 0, "last": None}
         assert client.get("/api/releases?limit=500").status_code == 422
 
+        # 本地 IMDb 数据集中的匹配：没有数据集时为 None；唯一一个年份对得上的才算找到
+        assert data["releases"][0]["imdb"] is None
+        from test_imdb_dataset import _transport
+
+        from whatdvd.imdb_dataset import build
+
+        build(tmp_path / "imdb.db", lambda *a: None, base_url="https://imdb.test", transport=_transport())
+        store.save(Record(id="d", title="Иди и смотри / Come and See (1985) DVD9", source="RuTor", kind="DVD9"))
+        store.save(Record(id="e", title="Неизвестный фильм (2003) DVD5", source="RuTor", kind="DVD5"))
+        found = client.get("/api/releases?q=1985").json()["releases"][0]["imdb"]
+        assert (found["id"], found["title"], found["year"]) == ("tt0091251", "Come and See", 1985)
+        missing = client.get("/api/releases?q=Неизвестный").json()["releases"][0]["imdb"]
+        assert missing["id"] is None and "没有" in missing["reason"]
+
         response = client.post("/api/releases/backfill")
         assert response.status_code == 202 and response.json()["total"] > 100
 
