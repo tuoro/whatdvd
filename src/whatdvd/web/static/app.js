@@ -523,6 +523,8 @@ function titlePanel(path, info) {
         t.original_title && t.original_title !== t.title ? h("span", {}, ` · 原名 ${t.original_title}`) : null,
         h("a", { href: t.url, target: "_blank", rel: "noopener noreferrer" }, "TMDB"),
         t.imdb_url ? h("a", { href: t.imdb_url, target: "_blank", rel: "noopener noreferrer" }, `IMDb ${t.imdb_id}`) : h("span", { class: "hint" }, "TMDB 中没有 IMDb 编号")),
+      h("p", { class: "hint" }, t.source === "IMDb" ? "片名、原名和年份来自 IMDb 数据集" : "片名来自 TMDB"),
+      ...(t.notes || []).map((n) => notice("warn", n)),
       h("dl", {},
         h("dt", {}, "PTP 发种名称"), h("dd", {}, h("code", {}, t.ptp_name),
           state.config.seed_dir ? fill : h("span", { class: "hint" }, "改文件夹名需要先在设置页面填写发种目录"),
@@ -530,7 +532,7 @@ function titlePanel(path, info) {
         h("dt", {}, "BHD 标题"), h("dd", {}, bhd, h("span", { class: "hint" }, "制式和音轨在生成截图后补全，任务结果中给出完整标题")),
         h("dt", {}, "版本"), h("dd", {}, field("edition", "可留空，例如 Director's Cut")),
         h("dt", {}, "地区或发行商"), h("dd", {}, field("region", "可留空，例如 RUS、Criterion Collection"))),
-      h("p", { class: "hint" }, "生成截图时会带上这个片名；IMDb 名和 TMDB 名偶尔不同，PTP 以 IMDb 为准，请点链接核对。"),
+      h("p", { class: "hint" }, "生成截图时会带上这个片名。"),
       clear));
   };
   go.addEventListener("click", search);
@@ -1039,7 +1041,48 @@ function renderSettings(data) {
 
   setMain(
     hero({ eyebrow: "whatdvd", title: "设置", compact: true, meta: [h("span", {}, "保存后立即生效，不用重启")] }),
-    h("div", { class: "content" }, error, form, fixed));
+    h("div", { class: "content" }, error, form, imdbSection(), fixed));
+}
+
+// IMDb 数据集：状态和“下载 / 更新”按钮，更新时轮询进度
+function imdbSection() {
+  const status = h("div", { class: "imdb-status" });
+  const button = h("button", { type: "button", class: "btn glass" });
+  let timer = null;
+  const render = (data) => {
+    const u = data.update;
+    const info = data.info;
+    const lines = [];
+    if (u.running) {
+      const pct = u.total ? ` ${Math.floor((u.done / u.total) * 100)}%` : "";
+      lines.push(h("p", {}, h("b", {}, `${u.phase}${pct}`), u.total ? h("span", { class: "hint" }, ` ${formatBytes(u.done)} / ${formatBytes(u.total)}`) : null));
+      if (u.total) lines.push(progressBar({ status: "running", progress: u.done / u.total }));
+    } else if (info) {
+      lines.push(h("p", {}, `已导入 ${info.titles.toLocaleString()} 部（其中 ${info.english_titles.toLocaleString()} 部有英文名），${stamp(info.imported_at)} 导入`,
+        info.source_date ? `，数据集更新于 ${new Date(info.source_date).toLocaleDateString("zh-CN")}` : "", `，占用 ${formatBytes(info.bytes)}。`));
+    } else {
+      lines.push(h("p", {}, "还没有下载。下载后查片名时以 IMDb 的英文名、原名和年份为准。"));
+    }
+    if (u.error) lines.push(notice("bad", `上次更新失败：${u.error}`));
+    status.replaceChildren(...lines);
+    button.disabled = u.running;
+    button.textContent = u.running ? "更新中…" : info ? "更新数据集" : "下载数据集";
+    clearTimeout(timer);
+    if (u.running) timer = setTimeout(refresh, 1500);
+  };
+  const refresh = async () => {
+    if (!document.body.contains(status)) return;  // 已离开设置页面
+    try { render(await api("/api/imdb")); } catch (error) { if (!(error instanceof AuthError)) status.replaceChildren(notice("bad", error.message)); }
+  };
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try { await api("/api/imdb/update", { method: "POST" }); } catch (error) { if (!(error instanceof AuthError)) toast(error.message); }
+    refresh();
+  });
+  setTimeout(refresh, 0);
+  return h("section", { class: "form-section" }, h("h2", {}, "IMDb 数据集"),
+    h("p", { class: "form-desc" }, "IMDb 官方数据集（datasets.imdbws.com，个人非商业使用），用来按 IMDb 编号取片名：PTP 要求文件夹名和 IMDb 一致。下载约 740 MB，边下载边导入，不保存压缩包；导入后本地占用约几百 MB，需要几分钟。IMDb 每天更新，想用新片时点“更新”。"),
+    status, h("div", { class: "actions" }, button));
 }
 
 function secretValue(ctl, key) {

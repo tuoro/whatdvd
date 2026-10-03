@@ -82,7 +82,15 @@ seed_dir = "/data/seed"     # 也可以在设置页面填写；必须和下载�
 - 选中后给出：
   - **PTP 发种名称**：IMDb / TMDB 的英文名 + 年份 + 盘型，例如 `Come.and.See.1985.DVD9`（PTP 2.1.1 要求和 IMDb 的原名或英文名一致）。配置了发种目录时自动填进“发种名称”。
   - **BHD 标题**：写法同 Upload-Assistant，`英文名 [AKA 原名] 年份 [版本] [地区或发行商] PAL|NTSC DVD9 MPEG-2 音轨`，例如 `Come and See AKA Иди и смотри 1985 RUS PAL DVD9 MPEG-2 DD5.1`。原名和英文名差别够大时才加 AKA；DD 音轨写成 `DD5.1`（BHD 3.4.4），其他写成 `DTS 5.1`。制式和音轨在生成截图后从识别结果和 VOB 的 MediaInfo 中补全，完整标题显示在任务结果里。
-  - TMDB 和 IMDb 链接。IMDb 名和 TMDB 名偶尔不同，PTP 以 IMDb 为准，请核对。
+  - TMDB 和 IMDb 链接，以及片名来自哪里（IMDb 数据集或 TMDB）。
+
+### IMDb 数据集（可选，推荐发 PTP 时使用）
+
+PTP 要求文件夹名和 IMDb 的名字一致，而 IMDb 没有免费的在线 API。设置页面的“IMDb 数据集”可以下载 IMDb 官方数据集（[datasets.imdbws.com](https://datasets.imdbws.com/)，个人非商业使用）：
+
+- 点“下载数据集 / 更新数据集”，在后台下载约 740 MB，边下载边导入本地 SQLite（放在数据库旁边的 `imdb.db`），不保存压缩包，界面显示进度。2026 年 10 月实测约 1–2 分钟，导入 169 万部（电影、电视电影、剧集、迷你剧、特别节目、录像，不含单集），占用约 130 MB。更新失败或中途取消时保留原来的数据。
+- 导入后，查片名时按 TMDB 给出的 IMDb 编号取 IMDb 的名字：IMDb 显示的名字（通常就是英文名，例如 Come and See、Moscow Does Not Believe in Tears）；非英语片显示的是原名时，用国际英文名（例如 Sen to Chihiro no kamikakushi → Spirited Away）。原名用 IMDb 的 originalTitle（俄语片是拉丁字母转写，例如 Idi i smotri），BHD 标题的 AKA 也用它。
+- 数据集里没有（新片）或者还没下载时，退回 TMDB 的名字，界面上会说明。
 
 ## 资源获取（Jackett + qBittorrent，可选）
 

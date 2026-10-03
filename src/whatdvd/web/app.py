@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import secrets
+import sqlite3
+import threading
 import time
 from dataclasses import replace
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -12,6 +14,7 @@ from importlib.resources import files
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
+import httpx
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -22,6 +25,7 @@ from ..post import DEFAULT_TEMPLATE
 from ..runner import Runner, SubprocessRunner
 from ..sources import find_sources, is_iso
 from ..checks import describe_extra_files, find_extra_files
+from ..imdb_dataset import Cancelled, DatasetError, ImdbDataset, Progress, build
 from ..indexer import IndexerError, Jackett
 from ..qbit import QBittorrent, QbitError
 from ..resolution import ASPECT_MODES
@@ -285,6 +289,7 @@ def create_app(
     jackett: Jackett | None = None,
     rutor: Rutor | None = None,
     tmdb_factory: Callable[[str], Tmdb] = Tmdb,
+    imdb_builder: Callable[[Path, Progress, threading.Event], dict[str, Any]] | None = None,
     background: bool = True,
 ) -> FastAPI:
     """qbit / jackett 不传时按配置创建；background=False 时不启动后台轮询（测试用）。
@@ -341,6 +346,7 @@ def create_app(
         await start_watcher(qbit, jackett, rutor)
         try:
             yield
+            imdb_stop.set()  # 停止正在进行的 IMDb 数据集下载
         finally:
             await stop_watcher()
             if store is not None:
@@ -755,12 +761,76 @@ def create_app(
             raise HTTPException(502, str(error)) from None
         finally:
             client.close()
+        # 有 IMDb 数据集时片名以 IMDb 为准（PTP 要求和 IMDb 一致），否则用 TMDB 的
+        title, original, year, source = match.title, match.original_title, match.year, "TMDB"
+        notes: list[str] = []
+        found = (
+            await asyncio.to_thread(imdb_dataset().title, match.imdb_id, match.original_language) if match.imdb_id else None
+        )
+        if found is not None:
+            title, original, year, source = found.title, found.original_title, found.year or match.year, "IMDb"
+            if found.title.casefold() != match.title.casefold():
+                notes.append(f"TMDB 的英文名是“{match.title}”，这里以 IMDb 为准。")
+        elif not match.imdb_id:
+            notes.append("TMDB 中没有这部片的 IMDb 编号，片名来自 TMDB，请自己到 IMDb 核对。")
+        elif imdb_dataset().info() is None:
+            notes.append("还没有下载 IMDb 数据集，片名来自 TMDB，可能和 IMDb 不同。可以在设置页面下载。")
+        else:
+            notes.append(f"IMDb 数据集中没有 {match.imdb_id}（可能是新片），片名来自 TMDB。可以在设置页面更新数据集。")
         # BHD 标题的开头（片名、AKA、年份）；地区、制式、音轨在界面和截图任务中补上
         head = bhd_title(
-            title=match.title, original_title=match.original_title, original_language=match.original_language,
-            year=match.year, standard=None, kind="", audio=None,
+            title=title, original_title=original, original_language=match.original_language,
+            year=year, standard=None, kind="", audio=None,
         ).removesuffix(" MPEG-2")
-        return {**match.public(), "ptp_name": ptp_name(match.title, match.year, disc), "bhd_head": head}
+        return {
+            **match.public(), "title": title, "original_title": original, "year": year, "source": source,
+            "tmdb_title": match.title, "notes": notes, "ptp_name": ptp_name(title, year, disc), "bhd_head": head,
+        }
+
+    # ---------- IMDb 数据集 ----------
+
+    imdb_stop = threading.Event()
+    imdb_update: dict[str, Any] = {"running": False, "phase": "", "done": 0, "total": 0, "error": None}
+
+    def imdb_dataset() -> ImdbDataset:
+        return ImdbDataset(cfg().database.with_name("imdb.db"))
+
+    @app.get("/api/imdb", dependencies=auth)
+    async def imdb_status() -> dict[str, Any]:
+        dataset = imdb_dataset()
+        return {"path": str(dataset.path), "info": await asyncio.to_thread(dataset.info), "update": dict(imdb_update)}
+
+    @app.post("/api/imdb/update", dependencies=auth, status_code=202)
+    async def update_imdb() -> dict[str, Any]:
+        """在后台下载并导入，界面轮询 /api/imdb 显示进度。"""
+        if imdb_update["running"]:
+            raise HTTPException(409, "IMDb 数据集正在更新")
+        path = imdb_dataset().path
+
+        def progress(phase: str, done: int, total: int) -> None:
+            imdb_update.update(phase=phase, done=done, total=total)
+
+        def work() -> None:
+            builder = imdb_builder or (lambda p, report, stop: build(p, report, stop=stop))
+            try:
+                builder(path, progress, imdb_stop)
+                imdb_update["error"] = None
+            except Cancelled:
+                imdb_update["error"] = "已取消"
+            except (DatasetError, OSError, sqlite3.Error) as error:
+                imdb_update["error"] = str(error)
+            except httpx.HTTPError as error:
+                imdb_update["error"] = f"下载失败：{error or type(error).__name__}"
+            finally:
+                imdb_update.update(running=False, phase="", finished_at=time.time())
+
+        imdb_update.update(running=True, phase="准备下载", done=0, total=0, error=None)
+        task = asyncio.get_running_loop().run_in_executor(None, work)
+        imdb_tasks.add(task)
+        task.add_done_callback(imdb_tasks.discard)
+        return dict(imdb_update)
+
+    imdb_tasks: set[asyncio.Future[None]] = set()
 
     @app.get("/api/browse", dependencies=auth)
     async def browse(path: str | None = None) -> dict[str, Any]:

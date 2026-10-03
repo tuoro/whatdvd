@@ -423,3 +423,6 @@ a.card:hover { border-color: var(--line-2); background: var(--panel-2); }
 .title-chosen code { font: 500 12.5px var(--mono); color: var(--ink); word-break: break-all; }
 .title-chosen > button { justify-self: start; }
 @media (max-width: 640px) { .title-chosen dl { grid-template-columns: 1fr; } }
+.imdb-status { display: grid; gap: 8px; color: var(--ink-2); font-size: 13.5px; }
+.imdb-status p { margin: 0; }
+.imdb-status .hint { color: var(--muted); }

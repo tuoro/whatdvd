@@ -462,6 +462,69 @@ def test_seed_dir_in_settings_page(settings_client: tuple[TestClient, Path], tmp
     assert client.put("/api/settings", json={"seed_dir": ""}).json()["values"]["seed_dir"] == ""
 
 
+def test_imdb_dataset_update_and_lookup(tmp_path: Path, media: Path) -> None:
+    """设置页面更新 IMDb 数据集；查片名时片名以 IMDb 为准，没有时退回 TMDB 并说明。"""
+    from test_imdb_dataset import BASICS, _transport
+    from test_tmdb import FakeTmdb
+
+    from whatdvd.imdb_dataset import build
+    from whatdvd.tmdb import Tmdb
+
+    without_twin_peaks = [line for line in BASICS if not line.startswith("tt0098936")]
+
+    def builder(path: Path, progress: Any, stop: threading.Event) -> dict[str, Any]:
+        return build(path, progress, stop=stop, base_url="https://imdb.test", transport=_transport(without_twin_peaks))
+
+    config = ServerConfig(roots=(media.resolve(),), output_dir=tmp_path / "out", token=TOKEN, tmdb_api_key="k",
+                          database=tmp_path / "state" / "whatdvd.db")
+    fake = FakeTmdb()
+    app = create_app(config, runner=FakeRunner(), imdb_builder=builder,
+                     tmdb_factory=lambda key: Tmdb(key, transport=httpx.MockTransport(fake)))
+    with TestClient(app, headers={"Authorization": f"Bearer {TOKEN}"}) as client:
+        status = client.get("/api/imdb").json()
+        assert status["info"] is None and status["update"]["running"] is False
+        assert status["path"] == str(tmp_path / "state" / "imdb.db")
+
+        detail = client.get("/api/tmdb/movie/25237", params={"disc": "DVD9"}).json()
+        assert detail["source"] == "TMDB" and "还没有下载 IMDb 数据集" in detail["notes"][0]
+
+        assert client.post("/api/imdb/update").status_code == 202
+        deadline = time.monotonic() + 10
+        while client.get("/api/imdb").json()["update"]["running"] and time.monotonic() < deadline:
+            time.sleep(0.05)
+        status = client.get("/api/imdb").json()
+        assert status["update"]["error"] is None and status["info"]["titles"] == 4
+
+        # FakeTmdb 中 25237 的 IMDb 编号是 tt0091251，数据集中有：名字以 IMDb 为准
+        detail = client.get("/api/tmdb/movie/25237", params={"disc": "DVD9"}).json()
+        assert (detail["source"], detail["title"], detail["original_title"]) == ("IMDb", "Come and See", "Idi i smotri")
+        assert detail["ptp_name"] == "Come.and.See.1985.DVD9"
+        assert detail["bhd_head"] == "Come and See AKA Idi i smotri 1985"
+        assert detail["notes"] == []
+
+        # 数据集中没有的：退回 TMDB 并说明
+        detail = client.get("/api/tmdb/tv/1920").json()
+        assert detail["source"] == "TMDB" and "数据集中没有 tt0098936" in detail["notes"][0]
+
+
+def test_imdb_update_error_is_reported(tmp_path: Path, media: Path) -> None:
+    from whatdvd.imdb_dataset import DatasetError
+
+    def builder(path: Path, progress: Any, stop: threading.Event) -> dict[str, Any]:
+        progress("下载并导入 title.basics（1/2）", 10, 100)
+        raise DatasetError("下载 https://datasets.imdbws.com/title.basics.tsv.gz 失败：HTTP 503")
+
+    config = ServerConfig(roots=(media.resolve(),), output_dir=tmp_path / "out", token=TOKEN, database=tmp_path / "w.db")
+    app = create_app(config, runner=FakeRunner(), imdb_builder=builder)
+    with TestClient(app, headers={"Authorization": f"Bearer {TOKEN}"}) as client:
+        assert client.post("/api/imdb/update").status_code == 202
+        deadline = time.monotonic() + 10
+        while client.get("/api/imdb").json()["update"]["running"] and time.monotonic() < deadline:
+            time.sleep(0.05)
+        update = client.get("/api/imdb").json()["update"]
+        assert "HTTP 503" in update["error"] and update["phase"] == ""
+
+
 def test_tmdb_requires_key(authed: TestClient, media: Path) -> None:
     info = authed.get("/api/source", params={"path": str(media / "Movie A")}).json()
     assert info["tmdb"] is False and info["guess"]["query"] == "Movie A"
