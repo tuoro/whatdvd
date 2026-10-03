@@ -372,3 +372,37 @@ def test_loose_streams() -> None:
 
     files = ["VIDEO_TS/VTS_01_1.VOB", "VIDEO_TS/VTS_01_1.ac3", "extras/movie.H264", "info.nfo"]
     assert loose_streams(files) == ["VIDEO_TS/VTS_01_1.ac3", "extras/movie.H264"]
+
+
+_DISC = [("VIDEO_TS/VIDEO_TS.IFO", 12_288), ("VIDEO_TS/VIDEO_TS.BUP", 12_288), ("VIDEO_TS/VTS_01_0.IFO", 69_632),
+         ("VIDEO_TS/VTS_01_0.BUP", 69_632), ("VIDEO_TS/VTS_01_1.VOB", 1_073_737_728),
+         ("VIDEO_TS/VTS_01_2.VOB", 1_073_737_728), ("VIDEO_TS/VTS_01_3.VOB", 500_000_000)]
+
+
+def _without(name: str) -> list[tuple[str, int]]:
+    return [f for f in _DISC if not f[0].endswith(name)]
+
+
+@pytest.mark.parametrize(
+    ("files", "title", "refuse", "note"),
+    [
+        (_DISC, "Film (2001) DVD5", None, None),
+        ([(f"DISC{n}/{p}", s) for n in (1, 2) for p, s in _DISC], "Film (2001) 2xDVD5", None, None),
+        ([("Film.iso", 7_000_000_000)], "Film (2001) DVD9", None, None),
+        ([*_DISC, ("Covers/front.jpg", 1_000), ("Film.nfo", 100)], "Film (2001) DVD5", None, None),
+        # rutor 上实际的：只有 VOB，没有任何 IFO
+        ([("VTS_01_1.VOB", 1_073_565_696), ("VTS_01_2.VOB", 1_073_565_696)], "Film DVD5", "没有 VIDEO_TS.IFO", None),
+        (_without("VIDEO_TS.IFO"), "Film DVD5", "没有 VIDEO_TS.IFO", None),
+        (_without("VTS_01_0.IFO"), "Film DVD5", "没有 VTS_01_0.IFO", None),
+        (_without("VTS_01_2.VOB"), "Film DVD5", "缺少 VTS_01_2.VOB", None),
+        ([("Film.iso", 9_000_000_000)], "Film DVD9", "超过 DVD9 的容量", None),
+        (_DISC, "Film (2001) DVD9", None, "放得进 DVD5"),
+        ([(f"DISC{n}/{p}", s) for n in (1, 2) for p, s in _DISC], "Film [2 DVD] DVD9", None, None),  # 合集不提示
+    ],
+)
+def test_disc_structure(files: list[tuple[str, int]], title: str, refuse: str | None, note: str | None) -> None:
+    from whatdvd.indexer import disc_structure
+
+    result = disc_structure(files, title)
+    assert (refuse is None) == (result.refuse is None) and (refuse is None or refuse in (result.refuse or ""))
+    assert (note is None) == (not result.notes) and (note is None or note in result.notes[0])

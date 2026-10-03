@@ -365,8 +365,9 @@ def disc_structure(files: list[tuple[str, int]], title: str = "") -> Structure:
 
     - 拒绝：缺 VIDEO_TS.IFO（每张 DVD 都必须有）、标题集缺 IFO、标题 VOB 编号中间缺号（VTS_01_1、VTS_01_3），
       一张盘的大小超过 DVD9 的容量；
-    - 提示：标着 DVD9、每张盘却都放得进 DVD5 的（可能压缩过或删掉了部分内容）。
-    ISO 只看大小。
+    - 提示：标着 DVD9、只有一张盘却放得进 DVD5 的（可能压缩过或删掉了部分内容）。
+    ISO 只看大小。2026 年 10 月 rutor 上随机 800 个 DVD 种子：拒绝 1 个（只有 VOB、没有任何 IFO），
+    缺 BUP 的 0 个；没有 VIDEO_TS.VOB 的 196 个（正版盘常见，不算）。
     """
     discs: dict[str, tuple[str, dict[str, int]]] = {}  # 目录（不分大小写）→（原样的目录名，{文件名: 大小}）
     for path, size in files:
@@ -398,7 +399,8 @@ def disc_structure(files: list[tuple[str, int]], title: str = "") -> Structure:
         return Structure(f"一张盘有 {_gb(max(sizes))}，超过 DVD9 的容量：不是原盘")
     notes = []
     claimed = {layer for _, layer in _DISCS.findall(title.translate(_LOOKALIKES))}
-    if sizes and claimed == {"9"} and all(size <= DVD5_MAX_BYTES for size in sizes):
+    # 只看单张盘：多碟合集常把每张都放得进 DVD5 的盘统称 DVD9（rutor 抽样的 800 个种子中这样的 2 个都是合集）
+    if len(sizes) == 1 and claimed == {"9"} and sizes[0] <= DVD5_MAX_BYTES:
         notes.append(f"标题写的是 DVD9，盘却只有 {_gb(max(sizes))}，放得进 DVD5：可能压缩过或删掉了部分内容，请确认")
     return Structure(notes=tuple(notes))
 
