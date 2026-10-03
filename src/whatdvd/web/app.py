@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import secrets
 import sqlite3
 import threading
@@ -359,6 +360,8 @@ def create_app(
     async def security_headers(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         response = await call_next(request)
         response.headers.update(SECURITY_HEADERS)
+        if request.url.path.endswith((".js", ".css")) and request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "no-cache"  # 每次都向服务器确认，升级后不会用旧的脚本
         return response
 
     def token_ok(token: str | None) -> bool:
@@ -405,6 +408,12 @@ def create_app(
 
     auth = [Depends(require_auth)]
 
+    # 脚本和样式的地址带上内容的哈希：升级后地址变了，浏览器不会继续用缓存里的旧版本
+    index_html = (STATIC_DIR / "index.html").read_text(encoding="utf-8")
+    for asset in ("app.js", "style.css"):
+        digest = hashlib.sha256((STATIC_DIR / asset).read_bytes()).hexdigest()[:12]
+        index_html = index_html.replace(f'"/static/{asset}"', f'"/static/{asset}?v={digest}"')
+
     @app.get("/", include_in_schema=False)
     async def index(request: Request, token: str | None = None) -> Response:
         if token is not None:
@@ -413,7 +422,7 @@ def create_app(
             if token_ok(token):
                 set_cookie(response, request)
             return response
-        return FileResponse(STATIC_DIR / "index.html", headers={"Cache-Control": "no-store"})
+        return Response(index_html, media_type="text/html; charset=utf-8", headers={"Cache-Control": "no-store"})
 
     @app.post("/api/login", status_code=204)
     async def login(body: LoginRequest, request: Request) -> Response:

@@ -98,6 +98,20 @@ def test_token_link_sets_cookie_and_redirects(client: TestClient) -> None:
     assert bad.status_code == 303 and "set-cookie" not in bad.headers
 
 
+def test_assets_are_versioned(client: TestClient) -> None:
+    """升级后浏览器不会继续用缓存里的旧脚本：地址带内容哈希，并且每次都要向服务器确认。"""
+    import re
+
+    page = client.get("/").text
+    script = re.search(r'src="(/static/app\.js\?v=[0-9a-f]{12})"', page)
+    style = re.search(r'href="(/static/style\.css\?v=[0-9a-f]{12})"', page)
+    assert script and style
+    response = client.get(script.group(1))
+    assert response.status_code == 200 and response.headers["cache-control"] == "no-cache"
+    assert "imdbSection" in response.text
+    assert client.get(style.group(1)).headers["cache-control"] == "no-cache"
+
+
 def test_security_headers(client: TestClient) -> None:
     headers = client.get("/").headers
     assert "default-src 'self'" in headers["content-security-policy"]
