@@ -19,9 +19,10 @@ from typing import Any, NoReturn
 import httpx
 
 from ..indexer import (
-    IndexerError, Jackett, Release, Verdict, classify, inspect_contents, loose_streams, release_page_issue,
+    IndexerError, Jackett, Release, Verdict, classify, disc_structure, inspect_contents, loose_streams,
+    release_page_issue,
 )
-from ..qbit import PathMap, QBittorrent, QbitError, magnet_info_hash, torrent_contents, torrent_info_hash
+from ..qbit import PathMap, QBittorrent, QbitError, magnet_info_hash, torrent_files, torrent_info_hash
 from ..rutor import SOURCE as RUTOR_SOURCE
 from ..rutor import Rutor
 from ..store import Record, Status, Store
@@ -43,13 +44,14 @@ MAX_CONSECUTIVE_FAILURES = 3
 """连续失败这么多次就停止（网站或 Jackett 不可用时，不再发出剩下的请求）。"""
 
 
-def _relative_files(path: Path, limit: int = 5000) -> list[str]:
+def _relative_files(path: Path, limit: int = 5000) -> list[tuple[str, int]]:
+    """（相对路径，大小）。"""
     if path.is_file():
-        return [path.name]
+        return [(path.name, path.stat().st_size)]
     files = []
     for item in path.rglob("*"):
         if item.is_file():
-            files.append(item.relative_to(path).as_posix())
+            files.append((item.relative_to(path).as_posix(), item.stat().st_size))
             if len(files) >= limit:
                 break
     return files
@@ -344,13 +346,20 @@ class Watcher:
         if torrent is not None:
             info_hash = torrent_info_hash(torrent)
             # 网页标题没写、种子里的文件夹名却写着 Custom 等标记的盘：拒绝推送，移到“已忽略”
-            name, files = torrent_contents(torrent)
+            name, sized = torrent_files(torrent)
+            files = [path for path, _ in sized]
             if reason := inspect_contents(name, files):
                 self._refuse(record, reason)
+            # 盘的结构：缺 VIDEO_TS.IFO、标题集缺 IFO 或 VOB 缺号的拒绝；标着 DVD9 却放得进 DVD5 的提示
+            structure = disc_structure(sized, record.title)
+            if structure.refuse:
+                self._refuse(record, structure.refuse)
+            notes = list(structure.notes)
             if streams := loose_streams(files):
-                note = (f"种子里有 {len(streams)} 个零散的音视频文件（{', '.join(Path(f).name for f in streams[:3])}）："
-                        "PTP 规定混进原盘的这类文件要删掉再发")
-                record = self.store.update(record.id, warnings=[note, *record.warnings])
+                notes.append(f"种子里有 {len(streams)} 个零散的音视频文件（{', '.join(Path(f).name for f in streams[:3])}）："
+                             "PTP 规定混进原盘的这类文件要删掉再发")
+            if notes:
+                record = self.store.update(record.id, warnings=[*notes, *record.warnings])
         elif magnet:
             info_hash = magnet_info_hash(magnet) or record.info_hash or ""
         else:
@@ -434,10 +443,13 @@ class Watcher:
     def _start(self, record: Record, local: Path) -> None:
         """local 为本机路径（已做过路径映射）。"""
         # 只有磁力链接、推送前看不到种子内容的，以及在 qB 中手动加进分类的：按下载下来的文件夹再查一次
-        if local.exists() and (reason := inspect_contents(local.name, _relative_files(local))):
-            self.store.update(record.id, status="failed", progress=1.0, local_path=str(local),
-                              error=f"不处理：{reason}")
-            return
+        if local.exists():
+            sized = _relative_files(local)
+            reason = inspect_contents(local.name, [path for path, _ in sized]) or disc_structure(sized).refuse
+            if reason:
+                self.store.update(record.id, status="failed", progress=1.0, local_path=str(local),
+                                  error=f"不处理：{reason}")
+                return
         resolved = self._allowed(local)
         if resolved is None:
             hint = "路径不存在" if not local.exists() else "不在允许的目录（roots）内"

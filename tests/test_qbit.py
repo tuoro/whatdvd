@@ -187,3 +187,10 @@ def test_torrent_contents() -> None:
     assert torrent_contents(TORRENT) == ("a.txt", ["a.txt"])
     with pytest.raises(QbitError, match="种子文件无效"):
         torrent_contents(b"d4:infoi1ee")
+
+
+def test_torrent_files() -> None:
+    from whatdvd.qbit import torrent_files
+
+    multi = (b"d4:infod5:filesld6:lengthi1048e4:pathl8:VIDEO_TS12:VTS_01_1.VOBeee4:name8:Film Oneee")
+    assert torrent_files(multi) == ("Film One", [("VIDEO_TS/VTS_01_1.VOB", 1048)])

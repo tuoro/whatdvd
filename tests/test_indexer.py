@@ -155,6 +155,10 @@ def test_fetch_torrent_and_magnet_redirect() -> None:
         ("Фильм / Film (2005) DVD5 | P2-сжатый", "压缩过的盘"),
         ("Фильм / Film (2002) DVD5-Сжатый", "压缩过的盘"),
         ("Фильм (1947) DVD5-Реставрация", "修复版"),
+        ("Фильм / Film (2004) DVD5 | без меню", "删掉了菜单或花絮"),
+        ("Фильм / Film (2004) DVD9 | Без доп. материалов", "删掉了菜单或花絮"),
+        ("Фильм / Film (2004) DVD5 (только фильм)", "删掉了菜单或花絮"),
+        ("Film (2004) DVD5 [Movie only]", "删掉了菜单或花絮"),
         ("Снежная королева [1938-1988, СССР, мультфильмы, Betacam SP > DVD5]", "转制"),
         ("Фильм / Film [1985, США, VHS > DVD9]", "转制"),
         ("Film (2001) DVDRip", "不是 DVD 原盘"),
@@ -313,6 +317,10 @@ DVD_FILES = ["VIDEO_TS/VIDEO_TS.IFO", "VIDEO_TS/VTS_01_1.VOB"]
         ("Saving.Private.Ryan.1998.DVD9.(custom)", DVD_FILES, "Custom"),
         ("Batman.&.Robin.(1997)(DVD5.Custom.NTSC.FS.DUB.Varus)", DVD_FILES, "Custom"),
         ("Film.2005.DVD5.сжатый", DVD_FILES, "压缩"),
+        ("Film.2005.DVD5.NO.MENU", DVD_FILES, "删掉了菜单或花絮"),
+        ("Film.2005.Main.Feature.Only.DVD9", DVD_FILES, "删掉了菜单或花絮"),
+        ("Only.Lovers.Left.Alive.2013.DVD9", DVD_FILES, None),
+        ("Без доступа (2005) DVD9", DVD_FILES, None),
         ("Film.2005.DVDRip", ["Film.avi"], "不是 DVD 原盘"),
         ("Film 2005", ["Film.mkv", "Film.srt"], "没有 VOB、IFO 或 ISO"),
         # 正常的
@@ -339,6 +347,9 @@ def test_inspect_contents(name: str, files: list[str], reason: str | None) -> No
         ("Качество: DVD-9 (Custom)<br />Видео: PAL", "Custom"),
         ("Качество видео: DVD9 (Custom)", "Custom"),
         ("Тип релиза : DVD5 (сжатый)", "压缩"),
+        ("Тип релиза : DVD5 (без меню)", "删掉了菜单或花絮"),
+        ("Качество: DVD9 (без допов)", "删掉了菜单或花絮"),
+        ("Качество: DVD9<br />Доп. материалы: нет", None),  # 原盘本来就没有花絮
         ("Качество: DVD5 Рип", "不是 DVD 原盘"),
         ("Тип релиза : DVD9<br />Format settings : CustomMatrix / BVOP<br />Метод сжатия : С потерями", None),
         ("Качество: DVD9<br />Matrix : Custom", None),
@@ -361,3 +372,37 @@ def test_loose_streams() -> None:
 
     files = ["VIDEO_TS/VTS_01_1.VOB", "VIDEO_TS/VTS_01_1.ac3", "extras/movie.H264", "info.nfo"]
     assert loose_streams(files) == ["VIDEO_TS/VTS_01_1.ac3", "extras/movie.H264"]
+
+
+_DISC = [("VIDEO_TS/VIDEO_TS.IFO", 12_288), ("VIDEO_TS/VIDEO_TS.BUP", 12_288), ("VIDEO_TS/VTS_01_0.IFO", 69_632),
+         ("VIDEO_TS/VTS_01_0.BUP", 69_632), ("VIDEO_TS/VTS_01_1.VOB", 1_073_737_728),
+         ("VIDEO_TS/VTS_01_2.VOB", 1_073_737_728), ("VIDEO_TS/VTS_01_3.VOB", 500_000_000)]
+
+
+def _without(name: str) -> list[tuple[str, int]]:
+    return [f for f in _DISC if not f[0].endswith(name)]
+
+
+@pytest.mark.parametrize(
+    ("files", "title", "refuse", "note"),
+    [
+        (_DISC, "Film (2001) DVD5", None, None),
+        ([(f"DISC{n}/{p}", s) for n in (1, 2) for p, s in _DISC], "Film (2001) 2xDVD5", None, None),
+        ([("Film.iso", 7_000_000_000)], "Film (2001) DVD9", None, None),
+        ([*_DISC, ("Covers/front.jpg", 1_000), ("Film.nfo", 100)], "Film (2001) DVD5", None, None),
+        # rutor 上实际的：只有 VOB，没有任何 IFO
+        ([("VTS_01_1.VOB", 1_073_565_696), ("VTS_01_2.VOB", 1_073_565_696)], "Film DVD5", "没有 VIDEO_TS.IFO", None),
+        (_without("VIDEO_TS.IFO"), "Film DVD5", "没有 VIDEO_TS.IFO", None),
+        (_without("VTS_01_0.IFO"), "Film DVD5", "没有 VTS_01_0.IFO", None),
+        (_without("VTS_01_2.VOB"), "Film DVD5", "缺少 VTS_01_2.VOB", None),
+        ([("Film.iso", 9_000_000_000)], "Film DVD9", "超过 DVD9 的容量", None),
+        (_DISC, "Film (2001) DVD9", None, "放得进 DVD5"),
+        ([(f"DISC{n}/{p}", s) for n in (1, 2) for p, s in _DISC], "Film [2 DVD] DVD9", None, None),  # 合集不提示
+    ],
+)
+def test_disc_structure(files: list[tuple[str, int]], title: str, refuse: str | None, note: str | None) -> None:
+    from whatdvd.indexer import disc_structure
+
+    result = disc_structure(files, title)
+    assert (refuse is None) == (result.refuse is None) and (refuse is None or refuse in (result.refuse or ""))
+    assert (note is None) == (not result.notes) and (note is None or note in result.notes[0])
