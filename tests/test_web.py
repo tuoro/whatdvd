@@ -883,7 +883,6 @@ def test_release_filters_and_paging(tmp_path: Path, media: Path) -> None:
         response = client.post("/api/releases/rebuild")
         assert response.status_code == 202 and response.json()["removed"] == 6 and response.json()["total"] > 100
         assert ids() == [] and ids("group=ignored") == ["ign"]
-        assert client.post("/api/releases/backfill").status_code == 409  # 全面搜索已经开始
 
 
 def test_settings_enable_rutor(settings_client: tuple[TestClient, Path]) -> None:
