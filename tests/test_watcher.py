@@ -390,7 +390,9 @@ def test_rutor_download_uses_rutor_torrent_file(tmp_path: Path, downloads: Path)
     record = h.watcher.store.list(["new"])[0]
     pushed = h.run(lambda: h.watcher.download(record.id))
     assert pushed.status == "sent"
-    assert fake.requests[-1] == "/download/1"  # 从 d.rutor.info 取种子，不经过 Jackett
+    assert "/download/1" in fake.requests  # 从 d.rutor.info 取种子，不经过 Jackett
+    assert any(r.startswith("/torrent/") for r in fake.requests)  # 读了发布页
+    assert pushed.error is None
 
 
 def test_same_torrent_from_jackett_and_rutor_is_listed_once(tmp_path: Path, downloads: Path) -> None:
@@ -487,3 +489,49 @@ def test_completed_custom_folder_is_not_processed(h: Harness, services: FakeServ
     record = h.watcher.store.by_hash("c" * 40)
     assert record is not None and record.status == "failed" and "不处理" in (record.error or "")
     assert h.submitted == []
+
+
+def test_push_refused_when_release_page_says_custom(tmp_path: Path, downloads: Path) -> None:
+    """标题和种子文件夹名都没写、发布页的“Тип релиза”写着 Custom：拒绝推送。"""
+    h, fake = _rutor_harness(tmp_path, downloads, total=1)
+    fake.release_type = "DVD9 (custom)"
+    h.run(h.watcher.search)
+    record = h.watcher.store.list(["new"])[0]
+    with pytest.raises(WatcherError, match="拒绝推送：发布页写着“Тип релиза: DVD9 \\(custom\\)”"):
+        h.run(lambda: h.watcher.download(record.id))
+    assert h.watcher.store.get(record.id).status == "ignored"  # type: ignore[union-attr]
+
+
+def test_unreadable_release_page_does_not_block(tmp_path: Path, downloads: Path) -> None:
+    """读不到发布页（例如 403）时不拦，推送后在资源上说明没有检查。"""
+    h, fake = _rutor_harness(tmp_path, downloads, total=1)
+    h.run(h.watcher.search)
+    record = h.watcher.store.list(["new"])[0]
+    original = fake.__call__
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403) if request.url.path.startswith("/torrent/") else original(request)
+
+    h.watcher.rutor._client._transport = httpx.MockTransport(handler)  # type: ignore[union-attr]
+    pushed = h.run(lambda: h.watcher.download(record.id))
+    assert pushed.status == "sent" and "没有检查描述" in (pushed.error or "")
+
+
+def test_loose_streams_warn_but_push(h: Harness, services: FakeServices) -> None:
+    """原盘里混进零散的音视频文件：照样推送，资源上加提示（PTP：删掉再发）。"""
+    record_id = _first(h)
+    with_streams = _torrent("Film One", ["VIDEO_TS/VTS_01_1.VOB", "Film.ac3", "Film.h264"])
+    original = FakeServices.__call__
+
+    def serve(self: FakeServices, request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/dl/"):
+            return httpx.Response(200, content=with_streams)
+        return original(self, request)
+
+    FakeServices.__call__ = serve  # type: ignore[method-assign]
+    try:
+        pushed = h.run(lambda: h.watcher.download(record_id))
+    finally:
+        FakeServices.__call__ = original  # type: ignore[method-assign]
+    assert pushed.status == "sent"
+    assert pushed.warnings[0].startswith("种子里有 2 个零散的音视频文件（Film.ac3, Film.h264）")

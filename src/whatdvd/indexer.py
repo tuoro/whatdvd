@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import html
 import re
 import time
 import xml.etree.ElementTree as ET
@@ -280,6 +281,56 @@ def inspect_contents(name: str, files: list[str]) -> str | None:
     if files and not any(f.lower().endswith(_DISC_FILES) for f in files):
         return f"种子“{name}”里没有 VOB、IFO 或 ISO 文件，不是 DVD 原盘"
     return None
+
+
+# 发布页描述中的“发布类型 / 画质”字段（rutor、rutracker 的写法），只看这些字段的值：
+# 描述里嵌的 MediaInfo 有 “CustomMatrix”“Метод сжатия”，页面下方还列着同一部片的 BDRemux，都不能算
+_RELEASE_FIELD = re.compile(r"(Тип релиза|Качество видео|Качество|Release type|Quality)\s*:\s*([^:]{0,60})", re.IGNORECASE)
+_FIELD_END = re.compile(r"\s+[A-ZА-ЯЁ][\w() /-]{1,40}$")  # 值后面紧跟的下一个字段名
+_RELEASE_BAD = [
+    (re.compile(r"custom|кастом", re.IGNORECASE), "Custom（改制过的盘）"),
+    (re.compile(r"сжат", re.IGNORECASE), "压缩过的盘（сжатый）"),
+    (re.compile(r"реставр", re.IGNORECASE), "修复版（Реставрация）"),
+    (re.compile(r"рип|rip\b|remux|ремукс|пересоб|rebuil", re.IGNORECASE), "重新压制或封装过的，不是 DVD 原盘"),
+]
+
+
+def _description(page: str) -> str:
+    """发布页中发布者写的描述（不含评论和“其他版本”列表），去掉标签。"""
+    start = page.find('id="details"')  # rutor：#details 的第一行
+    if start >= 0:
+        end = page.find("</tr>", page.find("<tr", start) + 1)
+    else:
+        start = page.find('class="post_body')  # rutracker：第一个帖子
+        end = page.find('class="post_body', start + 1) if start >= 0 else -1
+    if start < 0:
+        start, end = 0, len(page)
+    body = page[start : end if end > start else start + 50_000]
+    return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", body)))
+
+
+def release_page_issue(page: str) -> str | None:
+    """发布页描述的“发布类型 / 画质”写着 Custom、сжатый、Рип 等时返回原因（标题和种子文件夹名都没写的也能发现，
+    例如 “Тип релиза : DVD5 (Custom)”“Качество: DVD-5 (Custom)”）。"""
+    text = _description(page)
+    for match in _RELEASE_FIELD.finditer(text):
+        value = match.group(2)
+        if text[match.end() : match.end() + 1] == ":":  # 后面还有字段：去掉末尾的下一个字段名
+            value = _FIELD_END.sub("", value)
+        value = value.strip()
+        for pattern, reason in _RELEASE_BAD:
+            if pattern.search(value):
+                return f"发布页写着“{match.group(1)}: {value}”，是{reason}"
+    return None
+
+
+# 原盘里混进的零散音视频流文件（PTP：这样的种子可以被替换，删掉这些文件再发）
+LOOSE_STREAMS = (".h264", ".264", ".avc", ".m2v", ".mpv", ".ac3", ".eac3", ".dts", ".mpa", ".mp2", ".wav", ".pcm",
+                 ".lpcm", ".sup")
+
+
+def loose_streams(files: list[str]) -> list[str]:
+    return [f for f in files if f.lower().endswith(LOOSE_STREAMS)]
 
 
 def classify(title: str, size: int, seeders: int | None = None) -> Verdict:

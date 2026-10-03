@@ -156,6 +156,13 @@ class Rutor:
         other = {r.guid for category in NON_FILM for r in read(category)}
         return [r for r in releases if r.guid not in other]
 
+    def page(self, url: str) -> str:
+        """发布页（检查描述里的“发布类型 / 画质”）。"""
+        response = self._get(url)
+        if not response.is_success:
+            raise IndexerError(f"rutor 发布页返回 HTTP {response.status_code}")
+        return response.text
+
     def fetch(self, download_url: str) -> bytes:
         """下载种子文件（d.rutor.info，不需要登录）。"""
         response = self._get(download_url)

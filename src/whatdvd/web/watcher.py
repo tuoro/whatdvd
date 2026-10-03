@@ -14,9 +14,13 @@ import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
-from ..indexer import IndexerError, Jackett, Release, Verdict, classify, inspect_contents
+import httpx
+
+from ..indexer import (
+    IndexerError, Jackett, Release, Verdict, classify, inspect_contents, loose_streams, release_page_issue,
+)
 from ..qbit import PathMap, QBittorrent, QbitError, magnet_info_hash, torrent_contents, torrent_info_hash
 from ..rutor import SOURCE as RUTOR_SOURCE
 from ..rutor import Rutor
@@ -100,9 +104,13 @@ class Watcher:
         qbit: QBittorrent | None = None,
         jackett: Jackett | None = None,
         rutor: Rutor | None = None,
+        web: httpx.Client | None = None,
     ) -> None:
         self.config = config
         self.store = store
+        # 读 rutracker、kinozal 等的发布页（rutor 的用 Rutor，保持请求间隔）
+        self._web = web or httpx.Client(timeout=20.0, follow_redirects=True,
+                                        headers={"User-Agent": "Mozilla/5.0 whatdvd"})
         self.qbit = qbit
         self.jackett = jackett
         self.rutor = rutor
@@ -145,6 +153,7 @@ class Watcher:
             self.jackett.close()
         if self.rutor is not None:
             self.rutor.close()
+        self._web.close()
 
     # ---------- 搜索 ----------
 
@@ -335,9 +344,13 @@ class Watcher:
         if torrent is not None:
             info_hash = torrent_info_hash(torrent)
             # 网页标题没写、种子里的文件夹名却写着 Custom 等标记的盘：拒绝推送，移到“已忽略”
-            if reason := inspect_contents(*torrent_contents(torrent)):
-                self.store.update(record.id, status="ignored", error=reason, warnings=[reason, *record.warnings])
-                raise WatcherError(f"拒绝推送：{reason}")
+            name, files = torrent_contents(torrent)
+            if reason := inspect_contents(name, files):
+                self._refuse(record, reason)
+            if streams := loose_streams(files):
+                note = (f"种子里有 {len(streams)} 个零散的音视频文件（{', '.join(Path(f).name for f in streams[:3])}）："
+                        "PTP 规定混进原盘的这类文件要删掉再发")
+                record = self.store.update(record.id, warnings=[note, *record.warnings])
         elif magnet:
             info_hash = magnet_info_hash(magnet) or record.info_hash or ""
         else:
@@ -347,12 +360,36 @@ class Watcher:
         existing = self.store.by_hash(info_hash)
         if existing is not None and existing.id != record.id:
             raise WatcherError(f"这个种子已经在列表中：{existing.title}")
+        # 标题和文件夹名都没写、只在发布页“发布类型 / 画质”里写着 Custom 等的盘
+        page_note = self._check_page(record)
         self.qbit.ensure_category(qb.category)
         if torrent is not None:
             self.qbit.add(torrent=torrent, category=qb.category, save_path=qb.save_path, tags=["whatdvd"])
         else:
             self.qbit.add(magnet=magnet, category=qb.category, save_path=qb.save_path, tags=["whatdvd"])
-        return self.store.update(record.id, status="sent", info_hash=info_hash, progress=0.0, error=None)
+        return self.store.update(record.id, status="sent", info_hash=info_hash, progress=0.0, error=page_note)
+
+    def _refuse(self, record: Record, reason: str) -> NoReturn:
+        self.store.update(record.id, status="ignored", error=reason, warnings=[reason, *record.warnings])
+        raise WatcherError(f"拒绝推送：{reason}")
+
+    def _check_page(self, record: Record) -> str | None:
+        """读发布页，描述里写着 Custom 等就拒绝推送。读不到时不拦，返回说明。"""
+        if not record.details_url:
+            return None
+        try:
+            if record.source == RUTOR_SOURCE and self.rutor is not None:
+                page = self.rutor.page(record.details_url)
+            else:
+                response = self._web.get(record.details_url)
+                if not response.is_success:
+                    return f"发布页返回 HTTP {response.status_code}，没有检查描述"
+                page = response.text
+        except (IndexerError, httpx.HTTPError) as error:
+            return f"没能读取发布页（{error or type(error).__name__}），没有检查描述"
+        if reason := release_page_issue(page):
+            self._refuse(record, reason)
+        return None
 
     async def download(self, record_id: str) -> Record:
         if self.qbit is None:

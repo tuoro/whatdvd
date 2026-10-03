@@ -66,14 +66,25 @@ def test_parse_search_empty_and_changed_layout() -> None:
         parse_search(broken, "https://rutor.info")
 
 
+def details_page(release_type: str) -> str:
+    """rutor 发布页的结构：#details 第一行是描述（含 MediaInfo），后面是同一部片的其他版本。"""
+    return (
+        '<table id="details"><tr><td></td><td>Фильм / Film<br />Год выпуска : 1987<br />'
+        f"Тип релиза : {release_type}<br />Контейнер : DVD-Video<br />"
+        "Format settings : CustomMatrix / BVOP<br />Метод сжатия : С потерями</td></tr>"
+        "<tr><td>Другие раздачи</td><td>Film (1987) BDRemux 1080p</td></tr></table>"
+    )
+
+
 # 单文件种子，文件是 ISO（元数据，不含内容）
 DVD_TORRENT = b"d4:infod6:lengthi1e4:name8:Film.isoee"
 
 
 class FakeRutor:
-    def __init__(self, total: int, music: frozenset[int] = frozenset()) -> None:
-        """music：属于音乐分类（2）的资源编号；其他非零分类没有结果。"""
+    def __init__(self, total: int, music: frozenset[int] = frozenset(), release_type: str = "DVD9") -> None:
+        """music：属于音乐分类（2）的资源编号；其他非零分类没有结果。release_type：发布页的“Тип релиза”。"""
         self.total = total
+        self.release_type = release_type
         self.music = music
         self.requests: list[str] = []
 
@@ -81,6 +92,8 @@ class FakeRutor:
         self.requests.append(request.url.raw_path.decode())
         if request.url.host == "d.rutor.info":
             return httpx.Response(200, content=DVD_TORRENT)
+        if request.url.path.startswith("/torrent/"):  # 发布页
+            return httpx.Response(200, text=details_page(self.release_type))
         parts = request.url.path.split("/")  # /search/<页码>/<分类>/100/0/<关键词>
         number, category = int(parts[2]), int(parts[3])
         if category:

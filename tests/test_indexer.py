@@ -330,3 +330,34 @@ def test_inspect_contents(name: str, files: list[str], reason: str | None) -> No
 
     found = inspect_contents(name, files)
     assert (found is None) if reason is None else (found is not None and reason in found)
+
+
+@pytest.mark.parametrize(
+    ("description", "reason"),
+    [
+        ("Тип релиза : DVD5 (Custom)<br />Контейнер : DVD-Video", "Custom"),
+        ("Качество: DVD-9 (Custom)<br />Видео: PAL", "Custom"),
+        ("Качество видео: DVD9 (Custom)", "Custom"),
+        ("Тип релиза : DVD5 (сжатый)", "压缩"),
+        ("Качество: DVD5 Рип", "不是 DVD 原盘"),
+        ("Тип релиза : DVD9<br />Format settings : CustomMatrix / BVOP<br />Метод сжатия : С потерями", None),
+        ("Качество: DVD9<br />Matrix : Custom", None),
+        ("Качество: DVD-9 Enabled regions: 1, 2, 3", None),
+        ("Описание без полей", None),
+    ],
+)
+def test_release_page_issue(description: str, reason: str | None) -> None:
+    from whatdvd.indexer import release_page_issue
+
+    rutor = f'<table id="details"><tr><td></td><td>{description}</td></tr><tr><td>Film BDRemux 1080p</td></tr></table>'
+    rutracker = f'<div class="post_body">{description}</div><div class="post_body">Custom!</div>'  # 第二个是评论
+    for page in (rutor, rutracker):
+        found = release_page_issue(page)
+        assert (found is None) if reason is None else (found is not None and reason in found)
+
+
+def test_loose_streams() -> None:
+    from whatdvd.indexer import loose_streams
+
+    files = ["VIDEO_TS/VTS_01_1.VOB", "VIDEO_TS/VTS_01_1.ac3", "extras/movie.H264", "info.nfo"]
+    assert loose_streams(files) == ["VIDEO_TS/VTS_01_1.ac3", "extras/movie.H264"]

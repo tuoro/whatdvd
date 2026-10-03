@@ -15,6 +15,8 @@ _IMAGES = {".png", ".jpg", ".jpeg", ".bmp", ".gif", ".webp", ".tif", ".tiff"}
 _VIDEOS = {".mkv", ".mp4", ".avi", ".m2ts", ".ts", ".wmv", ".mov", ".m4v"}
 _INCOMPLETE = {".part", ".!qb", ".!ut", ".bc!", ".crdownload", ".tmp"}
 _SHORTCUTS = {".url", ".lnk", ".webloc"}
+# 混进原盘的零散音视频流（PTP：这样的种子可以被替换，删掉再发）
+_STREAMS = {".h264", ".264", ".avc", ".m2v", ".mpv", ".ac3", ".eac3", ".dts", ".mpa", ".mp2", ".wav", ".pcm", ".lpcm", ".sup"}
 _RELEASE_SUFFIXES = (".torrent", ".mediainfo.txt", ".post.txt")
 _DVD_FILES = {".ifo", ".bup", ".vob"}
 # DVD 结构中的目录，里面的文件不检查
@@ -43,6 +45,8 @@ def _reason(path: Path) -> str | None:
         return "视频文件（样片？）"
     if suffix in _SHORTCUTS:
         return "快捷方式"
+    if suffix in _STREAMS:
+        return "零散的音视频流（PTP：混进原盘的这类文件要删掉）"
     if path.parent.name.upper() == "VIDEO_TS" and suffix not in _DVD_FILES:
         return "VIDEO_TS 中不属于 DVD 结构的文件"
     return None
