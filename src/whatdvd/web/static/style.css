@@ -426,3 +426,5 @@ a.card:hover { border-color: var(--line-2); background: var(--panel-2); }
 .imdb-status { display: grid; gap: 8px; color: var(--ink-2); font-size: 13.5px; }
 .imdb-status p { margin: 0; }
 .imdb-status .hint { color: var(--muted); }
+.title-option .imdb-mark { color: var(--amber); font: 500 11.5px var(--mono); }
+.title-option .imdb-mark.missing { color: var(--muted); font-family: inherit; }

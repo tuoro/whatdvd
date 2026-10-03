@@ -516,6 +516,14 @@ def test_imdb_dataset_update_and_lookup(tmp_path: Path, media: Path) -> None:
         assert detail["bhd_head"] == "Come and See AKA Idi i smotri 1985"
         assert detail["notes"] == []
 
+        # 搜索结果里直接标出 IMDb 编号和 IMDb 的名字
+        found = client.get("/api/tmdb/search", params={"q": "x"}).json()
+        assert found["dataset"] is True
+        imdb = {r["title"]: r["imdb"] for r in found["results"]}
+        assert imdb["Come and See"] == {"id": "tt0091251", "title": "Come and See", "year": 1985}
+        assert imdb["Twin Peaks"] == {"id": "tt0098936"}  # 数据集中没有
+        assert imdb["The Emerald Forest"] == {"id": None}  # TMDB 中没有 IMDb 编号（模拟的详情取不到）
+
         # 数据集中没有的：退回 TMDB 并说明
         detail = client.get("/api/tmdb/tv/1920").json()
         assert detail["source"] == "TMDB" and "数据集中没有 tt0098936" in detail["notes"][0]

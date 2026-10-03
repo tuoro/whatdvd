@@ -454,6 +454,13 @@ function optionsRow() {
 
 // ---------- 查片名（TMDB）----------
 
+// 搜索结果中的 IMDb 标注：编号，以及 IMDb 数据集中的名字和年份
+function imdbLine(imdb, hasDataset) {
+  if (!imdb || !imdb.id) return h("span", { class: "imdb-mark missing" }, "没有 IMDb 编号");
+  if (imdb.title) return h("span", { class: "imdb-mark" }, `IMDb ${imdb.id} · ${imdb.title}${imdb.year ? ` (${imdb.year})` : ""}`);
+  return h("span", { class: "imdb-mark" }, `IMDb ${imdb.id}${hasDataset ? " · 数据集中没有" : ""}`);
+}
+
 function titlePanel(path, info) {
   const heading = h("h2", { class: "section-title" }, "片名");
   if (!info.tmdb) {
@@ -474,7 +481,8 @@ function titlePanel(path, info) {
       results.replaceChildren(...(data.results.length ? data.results.map((m) => {
         const pick = h("button", { type: "button", class: "title-option" },
           h("b", {}, `${m.title}${m.year ? ` (${m.year})` : ""}`),
-          h("span", {}, [m.kind === "tv" ? "剧集" : "电影", m.original_title && m.original_title !== m.title ? m.original_title : null].filter(Boolean).join(" · ")));
+          h("span", {}, [m.kind === "tv" ? "剧集" : "电影", m.original_title && m.original_title !== m.title ? m.original_title : null].filter(Boolean).join(" · ")),
+          imdbLine(m.imdb, data.dataset));
         pick.addEventListener("click", () => choose(m, pick));
         return pick;
       }) : [h("span", { class: "hint" }, "没有找到，换个写法或去掉年份再试")]));

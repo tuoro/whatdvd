@@ -35,7 +35,7 @@ from ..release_names import audio_from_mediainfo, bhd_title, disc_kind, guess_qu
 from ..rutor import Rutor
 from ..seedlink import LinkError, check_name, link_tree, same_filesystem, target_name
 from ..store import Status, Store
-from ..tmdb import Tmdb, TmdbError
+from ..tmdb import Match, Tmdb, TmdbError
 from ..torrent import PIECE_LENGTH_RANGE, make_torrent
 from ..upload import PIXHOST_DOMAINS, Pixhost
 from ..workflow import HostFactory, RunOptions, RunResult, check_tools, output_title, run
@@ -754,11 +754,22 @@ def create_app(
             matches = await asyncio.to_thread(client.search, q.strip(), year)
             if not matches and year:  # 年份对不上时（例如按发行年份标的）不限年份再搜一次
                 matches = await asyncio.to_thread(client.search, q.strip(), None)
+            # 搜索结果里没有 IMDb 编号：逐个取详情（并行），好在列表里直接标出 IMDb 的名字
+            detailed = await asyncio.gather(
+                *(asyncio.to_thread(client.details, m.kind, m.id) for m in matches), return_exceptions=True
+            )
         except TmdbError as error:
             raise HTTPException(502, str(error)) from None
         finally:
             client.close()
-        return {"results": [m.public() for m in matches]}
+        dataset = imdb_dataset()
+        results = []
+        for match, detail in zip(matches, detailed, strict=True):
+            imdb_id = detail.imdb_id if isinstance(detail, Match) else None
+            found = await asyncio.to_thread(dataset.title, imdb_id, match.original_language) if imdb_id else None
+            imdb = {"id": imdb_id, "title": found.title, "year": found.year} if found else {"id": imdb_id}
+            results.append({**match.public(), "imdb_id": imdb_id, "imdb": imdb})
+        return {"results": results, "dataset": dataset.path.is_file()}
 
     @app.get("/api/tmdb/{kind}/{tmdb_id}", dependencies=auth)
     async def tmdb_details(kind: Literal["movie", "tv"], tmdb_id: int, disc: str = "") -> dict[str, Any]:

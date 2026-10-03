@@ -89,6 +89,7 @@ seed_dir = "/data/seed"     # 也可以在设置页面填写；必须和下载�
 PTP 要求文件夹名和 IMDb 的名字一致，而 IMDb 没有免费的在线 API。设置页面的“IMDb 数据集”可以下载 IMDb 官方数据集（[datasets.imdbws.com](https://datasets.imdbws.com/)，个人非商业使用）：
 
 - 点“下载数据集 / 更新数据集”，在后台下载约 740 MB，边下载边导入本地 SQLite（放在数据库旁边的 `imdb.db`），不保存压缩包，界面显示进度。2026 年 10 月实测约 1–2 分钟，导入 169 万部（电影、电视电影、剧集、迷你剧、特别节目、录像，不含单集），占用约 130 MB。更新失败或中途取消时保留原来的数据。
+- 搜索结果里直接标出每部片的 IMDb 编号和 IMDb 的名字、年份（没有编号或数据集中没有时也会标明）。
 - 导入后，查片名时按 TMDB 给出的 IMDb 编号取 IMDb 的名字：IMDb 显示的名字（通常就是英文名，例如 Come and See、Moscow Does Not Believe in Tears）；非英语片显示的是原名时，用国际英文名（例如 Sen to Chihiro no kamikakushi → Spirited Away）。原名用 IMDb 的 originalTitle（俄语片是拉丁字母转写，例如 Idi i smotri），BHD 标题的 AKA 也用它。
 - 数据集里没有（新片）或者还没下载时，退回 TMDB 的名字，界面上会说明。
 
