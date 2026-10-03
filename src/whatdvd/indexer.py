@@ -10,7 +10,7 @@ import html
 import re
 import time
 import xml.etree.ElementTree as ET
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
 from urllib.parse import quote
@@ -141,18 +141,21 @@ class Jackett:
         *,
         indexer: str = "all",
         films_only: bool = False,
+        exclude: Collection[str] = (),
         timeout: float = 120.0,
         delay: float = 0.0,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
         """delay：两次搜索之间至少间隔多少秒。全面搜索会连续搜几百次，
-        kinozal 等站点对搜索频率有限制，太快会被暂时封禁。"""
+        kinozal 等站点对搜索频率有限制，太快会被暂时封禁。
+        exclude：搜索结果中去掉这些站点（Jackett 中的 id）的，用于发种的站点（Blutopia 等）不当作资源来源。"""
         self._delay = delay
         self._last_search = 0.0
         self._base = url.rstrip("/")
         self._api_key = api_key
         self._indexer = indexer
         self._films_only = films_only
+        self._exclude = frozenset(exclude) - {indexer}
         self._client = httpx.Client(timeout=timeout, transport=transport)
 
     def close(self) -> None:
@@ -162,7 +165,7 @@ class Jackett:
         params = {"t": "search", "q": query}
         if self._films_only:  # Jackett 按分类分别向站点搜索，每个分类各有一份条数上限
             params["cat"] = FILM_QUERY_CATEGORIES
-        releases = self._results(params)
+        releases = [r for r in self._results(params) if r.indexer_id not in self._exclude]
         return [r for r in releases if is_film(r)] if self._films_only else releases
 
     def search_imdb(self, imdb_id: str) -> list[Release]:

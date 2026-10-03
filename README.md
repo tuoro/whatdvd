@@ -174,7 +174,7 @@ films_only = true        # 只要影视类
 
 片名确定（有 IMDb 编号）后，按 IMDb 编号在站点上查这部片已有的 DVD 原盘，只读，不上传：
 
-- 在设置页面的“站点”一节管理要发种的站点：名称、类型（UNIT3D 标准接口、BeyondHD、PTP；BHD 也是 UNIT3D 改的，但接口和字段不同，单独算一类）、这个站点在 Jackett 中的 ID（例如 Blutopia 是 `blutopia-api`，站点要先在 Jackett 中添加好）、是否启用。只有勾选的站点参与查重和发种清单；没填 Jackett ID 的站点不查重，结果中写明。配置文件写 `[sites]` 下的 `list = [{ id = "blutopia", name = "Blutopia", kind = "unit3d", jackett = "blutopia-api" }]`；旧版本的 `jackett.dupe_indexers` 会自动当作站点。
+- 在设置页面的“站点”一节管理要发种的站点：名称、类型（UNIT3D 标准接口、BeyondHD、PTP；BHD 也是 UNIT3D 改的，但接口和字段不同，单独算一类）、这个站点在 Jackett 中的 ID（例如 Blutopia 是 `blutopia-api`，站点要先在 Jackett 中添加好）、是否启用。只有勾选的站点参与查重和发种清单；这些站点（停用的也算）在 Jackett 中的 ID 不会当作资源来源：Jackett 搜 all 时也会搜到 Blutopia 等发种站点上的种子，资源页不列出它们（以前搜到的也不再显示）；没填 Jackett ID 的站点不查重，结果中写明。配置文件写 `[sites]` 下的 `list = [{ id = "blutopia", name = "Blutopia", kind = "unit3d", jackett = "blutopia-api" }]`；旧版本的 `jackett.dupe_indexers` 会自动当作站点。
 - 查重按站点分开显示。三个地方可以查：
   - **下载前**：资源候选列表中，IMDb 对上了的候选有“查重”按钮，看站点上是不是已经有同格式、同制式的盘，再决定要不要下载（候选的大小是整个种子的，多半含 nfo 等附加文件，只能“接近”）；
   - **处理完成后**：任务结果中自动列出；

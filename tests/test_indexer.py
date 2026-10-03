@@ -96,6 +96,18 @@ def test_search_films_only() -> None:
     assert seen == ["2000,5000,8000", None]
 
 
+def test_search_excludes_upload_sites() -> None:
+    """Jackett 搜 all 时也会搜到发种站点（Blutopia 等）上的种子：去掉，不当作资源来源；单独选了这个站点时不去掉。"""
+    feed = ("<rss><channel><title>x</title>" + _film_item("rt", "rutracker", 2000, 100101)
+            + _film_item("blu", "blutopia-api", 2000, 100001) + "</channel></rss>")
+    transport = httpx.MockTransport(lambda request: httpx.Response(200, text=feed))
+    found = Jackett("http://jackett:9117", "KEY", exclude={"blutopia-api"}, transport=transport).search("DVD9")
+    assert [r.guid for r in found] == ["rt"]
+    only = Jackett("http://jackett:9117", "KEY", indexer="blutopia-api", exclude={"blutopia-api"}, transport=transport)
+    assert len(only.search("DVD9")) == 2
+    assert len(Jackett("http://jackett:9117", "KEY", exclude={"blutopia-api"}, transport=transport).search_imdb("tt1")) == 2
+
+
 def test_search_request() -> None:
     seen: list[httpx.Request] = []
 

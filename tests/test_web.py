@@ -861,11 +861,11 @@ def test_release_filters_and_paging(tmp_path: Path, media: Path) -> None:
     from whatdvd.store import Record
 
     from whatdvd.indexer import Jackett
-    from whatdvd.web.config import JackettConfig
+    from whatdvd.web.config import JackettConfig, SiteConfig
 
     config = ServerConfig(
         roots=(media.resolve(),), output_dir=tmp_path / "out", token=TOKEN, database=tmp_path / "state.db",
-        jackett=JackettConfig("http://jackett", "k"),
+        jackett=JackettConfig("http://jackett", "k"), sites=(SiteConfig("blu", "Blutopia", "unit3d", "blutopia-api", False),),
     )
 
     jackett = Jackett("http://jackett", "k", transport=httpx.MockTransport(lambda r: httpx.Response(500)))
@@ -922,6 +922,10 @@ def test_release_filters_and_paging(tmp_path: Path, media: Path) -> None:
         store.save(Record(id="k", title="Andre Rieu - Live 2003 БП DVD-9", source="Kinozal (M)", kind="DVD9",
                           indexer_id="kinozal-magnet", categories=[2000, 100048]))
         assert "k" not in ids()
+        # 发种站点（停用的也算）上的种子不是资源来源：以前搜到的也不显示
+        store.save(Record(id="b", title="Black Sun AKA Schwarze Sonne 1998 GER PAL DVD9 DD 2.0-TSiNT", source="Blutopia (API)",
+                          kind="DVD9", indexer_id="blutopia-api", categories=[2000]))
+        assert "b" not in ids()
 
         # 重建候选列表：清空“候选”，再全面搜索（已忽略的不动）
         store.save(Record(id="ign", title="Ignored (2001) DVD9", source="RuTor", kind="DVD9", status="ignored"))

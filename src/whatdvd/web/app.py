@@ -100,6 +100,12 @@ class JackettTest(BaseModel):
     """None 表示用已保存的 API Key。"""
 
 
+def _site_indexers(c: ServerConfig) -> frozenset[str]:
+    """设置里的发种站点在 Jackett 中的 id（启用与否都算）：Jackett 搜 all 时会搜到它们，不能当作资源来源，
+    否则会出现 Blutopia 上的种子拿去 Blutopia 查重的情况。"""
+    return frozenset(site.jackett for site in c.sites if site.jackett)
+
+
 def _keep_announces(items: list[Any], current: tuple[SiteConfig, ...]) -> list[Any]:
     """浏览器拿不到 announce（含 passkey）：提交的站点没有 announce 时沿用原来的，为 "" 时清空。"""
     old = {site.id: site.announce for site in current}
@@ -373,7 +379,7 @@ def create_app(
         if jk is None and c.jackett is not None:
             jk = Jackett(
                 c.jackett.url, c.jackett.api_key, indexer=c.jackett.indexer, films_only=c.jackett.films_only,
-                delay=JACKETT_DELAY,
+                exclude=_site_indexers(c), delay=JACKETT_DELAY,
             )
         if qb is None and jk is None and ru is None:
             return
@@ -574,7 +580,7 @@ def create_app(
         live[0] = new
         if new.max_jobs != old.max_jobs:
             await manager.set_limit(new.max_jobs)
-        if (new.qbit, new.jackett, new.rutor) != (old.qbit, old.jackett, old.rutor):
+        if (new.qbit, new.jackett, new.rutor, _site_indexers(new)) != (old.qbit, old.jackett, old.rutor, _site_indexers(old)):
             await stop_watcher()
             await start_watcher()
 
@@ -702,6 +708,9 @@ def create_app(
         jk = cfg().jackett
         if group == "new" and jk is not None and jk.films_only:  # 保存了分类的按现在的“只要影视类”规则重新过滤
             records = [r for r in records if not r.categories or film_categories(r.indexer_id, r.categories)]
+        if group == "new" and jk is not None:  # 发种站点（Blutopia 等）上的种子不是资源来源；以前搜到的也不显示
+            excluded = _site_indexers(cfg()) - {jk.indexer}
+            records = [r for r in records if r.indexer_id not in excluded]
         words = q.casefold().split()
         if words:
             records = [r for r in records if all(word in r.title.casefold() for word in words)]
