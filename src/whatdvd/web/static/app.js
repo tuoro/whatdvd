@@ -1011,18 +1011,21 @@ function renderSettings(data) {
     url: ctl["rutor.url"].value.trim(),
   }, (r) => `连接成功，搜索 DVD9 共 ${r.total} 条结果`));
 
-  // Jackett 测试：成功后把已配置的站点填进下拉框
+  // Jackett 测试：成功后把已配置的站点填进下拉框；打开设置页面时已填好地址和 API Key 的自动测一次
   const jkResult = h("small", { class: "test-result" });
   const jkTest = h("button", { type: "button", class: "btn small glass" }, "测试连接");
-  const indexerList = h("datalist", { id: "jackett-indexers" }, h("option", { value: "all" }, "全部已配置的站点"));
+  const describeIndexers = (r) => {
+    setJackettIndexers(r.indexers);
+    return r.indexers.length ? `连接成功，已配置的站点：${r.indexers.map((i) => `${i.name}（${i.id}）`).join("、")}` : "连接成功，但 Jackett 中还没有配置站点";
+  };
   jkTest.addEventListener("click", () => testConnection(jkTest, jkResult, "/api/settings/test/jackett", {
     url: ctl["jackett.url"].value.trim(),
     api_key: secretValue(ctl, "jackett.api_key"),
-  }, (r) => {
-    indexerList.replaceChildren(h("option", { value: "all" }, "全部已配置的站点"),
-      ...r.indexers.map((i) => h("option", { value: i.id }, i.name)));
-    return r.indexers.length ? `连接成功，已配置的站点：${r.indexers.map((i) => `${i.name}（${i.id}）`).join("、")}` : "连接成功，但 Jackett 中还没有配置站点";
-  }));
+  }, describeIndexers));
+  jackettSelects.clear();
+  if (v.jackett.url && v.jackett.api_key_set) {
+    testConnection(jkTest, jkResult, "/api/settings/test/jackett", { url: v.jackett.url, api_key: null }, describeIndexers);
+  }
 
   const tmResult = h("small", { class: "test-result" });
   const tmTest = h("button", { type: "button", class: "btn small glass" }, "测试");
@@ -1073,7 +1076,8 @@ function renderSettings(data) {
     section("Jackett", "填写地址和 API Key 即启用：在“资源”页搜索 DVD 原盘。请在 Jackett 中关掉 kinozal、rutracker 等俄语站点的“Strip Cyrillic Letters”和“Add RUS to end of all titles”：开着会删掉片名和 сжатый、Лицензия 等过滤用的标记。kinozal 的标题写“DVD-9”，搜索关键词要包含 DVD-9、DVD-5。",
       row("地址", h("span", { class: "inline" }, input("jackett.url", v.jackett.url, { placeholder: "例如 http://192.168.1.10:9117，留空不启用" }), jkTest), jkResult),
       row("API Key", secret("jackett.api_key", v.jackett.api_key_set, "Jackett 页面右上角的 API Key")),
-      row("站点", h("span", {}, input("jackett.indexer", v.jackett.indexer, { list: "jackett-indexers" }), indexerList), "all 为全部已配置的站点；点“测试连接”后可以从列表中选"),
+      row("站点", (ctl["jackett.indexer"] = jackettSelect(v.jackett.indexer || "all", ["all", "全部已配置的站点"])),
+        "搜索哪个站点；列表来自 Jackett，连接成功后才有各个站点"),
       row("搜索关键词", input("jackett.queries", v.jackett.queries.join(" ")), "多个用空格分隔"),
       row("自动搜索", number("jackett.interval", v.jackett.interval, 0, 10080), "分钟一次；0 为只手动搜索"),
       row("只要影视类", toggle("jackett.films_only", v.jackett.films_only, "只要分类 2000（电影）和 5000（电视剧、动画、纪录片），去掉音乐、培训、体育等；Jackett 的 rutor 不区分分类，无法过滤"))),
@@ -1118,6 +1122,28 @@ function renderSettings(data) {
     h("div", { class: "content" }, error, form, imdbSection(), ifoSection(), fixed));
 }
 
+// Jackett 中已配置的站点（设置页面测试连接后得到），设置页面的几个下拉框共用
+let jackettIndexers = [];
+const jackettSelects = new Set();
+function fillJackettSelect(select, value, first) {
+  const options = [first, ...jackettIndexers.map((i) => [i.id, `${i.name}（${i.id}）`])];
+  if (value && !options.some(([id]) => id === value)) options.push([value, jackettIndexers.length ? `${value}（Jackett 中没有这个站点）` : value]);
+  select.replaceChildren(...options.map(([id, label]) => h("option", { value: id, selected: id === value }, label)));
+}
+function jackettSelect(value, first) {
+  const select = h("select", {});
+  select.refill = () => fillJackettSelect(select, select.value, first);
+  fillJackettSelect(select, value, first);
+  jackettSelects.add(select);
+  return select;
+}
+function setJackettIndexers(indexers) {
+  jackettIndexers = indexers;
+  for (const select of jackettSelects) {
+    if (document.body.contains(select)) select.refill(); else jackettSelects.delete(select);
+  }
+}
+
 // 设置页面的站点列表：启用、名称、类型、Jackett 中的 ID
 const SITE_KINDS = [["unit3d", "UNIT3D 标准接口（Blutopia、Aither 等）"], ["bhd", "BeyondHD（UNIT3D 改版，接口不同）"], ["ptp", "PassThePopcorn"]];
 const SITE_PRESETS = [
@@ -1137,8 +1163,8 @@ function sitesEditor(initial) {
       name.addEventListener("input", () => { site.name = name.value.trim(); });
       const kind = h("select", {}, SITE_KINDS.map(([value, label]) => h("option", { value, selected: value === site.kind }, label)));
       kind.addEventListener("change", () => { site.kind = kind.value; });
-      const jackett = h("input", { type: "text", value: site.jackett, placeholder: "Jackett 中的 ID，例如 blutopia-api", list: "jackett-indexers", spellcheck: "false" });
-      jackett.addEventListener("input", () => { site.jackett = jackett.value.trim(); });
+      const jackett = jackettSelect(site.jackett, ["", "Jackett 中的站点：未选（不查重）"]);
+      jackett.addEventListener("change", () => { site.jackett = jackett.value; });
       // announce 含 passkey：服务端不发回来，只告诉是否已设置；不改时不提交这一项，保持原样
       const announce = h("input", { type: "password", value: site.announce || "", autocomplete: "off", spellcheck: "false",
         placeholder: site.announce_set ? "announce 已设置，留空不修改" : "announce 地址（含 passkey，做种用，可不填）" });
