@@ -102,6 +102,7 @@ def settings_values(c: ServerConfig) -> dict[str, Any]:
         "max_jobs": c.max_jobs,
         "temp_dir": str(c.temp_dir) if c.temp_dir else "",
         "seed_dir": str(c.seed_dir) if c.seed_dir else "",
+        "auto_rename": c.auto_rename,
         "screenshots": {"count": c.screenshot_count, "aspect": c.aspect, "dark_filter": c.dark_filter},
         "pixhost": {"domain": c.pixhost_domain, "proxy": c.proxy or ""},
         "torrent": {"announces": list(c.announces), "piece_length": c.piece_length},
@@ -328,7 +329,7 @@ def create_app(
         if qb is None and jk is None and ru is None:
             return
         store = store or Store(c.database)
-        watcher = Watcher(c, store, submit_run=submit_run, get_job=manager.get, qbit=qb, jackett=jk, rutor=ru)
+        watcher = Watcher(c, store, submit_run=submit_auto, get_job=manager.get, qbit=qb, jackett=jk, rutor=ru)
         app.state.watcher = watcher
         if background:
             watcher_task = asyncio.create_task(watcher.run_forever())
@@ -738,6 +739,8 @@ def create_app(
             "total_bytes": sum(d["bytes"] for d in discs),
             "disc_kind": disc_kind([d["media_type"] for d in discs]),
             "guess": {"query": query, "year": year, "from": "release" if record else "name"},
+            # 自动按 IMDb 改名打开时，有把握的片名预先选中
+            "suggested": (await asyncio.to_thread(auto_title, target, record.title if record else ""))[0],
             "tmdb": bool(cfg().tmdb_api_key),
             "imdb_dataset": imdb_dataset().path.is_file(),
         }
@@ -824,8 +827,6 @@ def create_app(
                 year = year or match.year
                 if found.title.casefold() != match.title.casefold():
                     notes.append(f"TMDB 的英文名是“{match.title}”，这里以 IMDb 为准。")
-            else:
-                notes.append("TMDB 中没有这部片，片名来自 IMDb 数据集。")
         elif match is None:
             raise HTTPException(404, f"IMDb 数据集中没有 {imdb_id}")
         else:
@@ -944,10 +945,20 @@ def create_app(
 
     def seed_source(job: Job, reporter: JobReporter) -> Path:
         """配置了发种目录时，先用硬链接把盘放到发种目录（可以改名），之后都处理这一份。"""
+        if note := job.params.get("auto_note"):
+            reporter.info(note)
         seed_dir = cfg().seed_dir
         if seed_dir is None:
             return job.path
-        target, created = link_tree(job.path, seed_dir, job.params.get("seed_name") or None)
+        name = job.params.get("seed_name") or None
+        try:
+            target, created = link_tree(job.path, seed_dir, name)
+        except LinkError as error:
+            if not (job.params.get("auto_title") and "不是同一份数据" in str(error)):
+                raise
+            # 自动选的名字和发种目录中别的盘重名（例如同一部片的另一个版本）：保留原名
+            reporter.error(f"{error} 改用原名。")
+            target, created = link_tree(job.path, seed_dir, None)
         reporter.info(f"{'已用硬链接放到' if created else '使用发种目录中已有的'} {target}")
         return target
 
@@ -991,6 +1002,41 @@ def create_app(
             "extra_files": [{"path": item.path.as_posix(), "reason": item.reason} for item in extra],
             "files": [output.name],
         }
+
+    def disc_kind_of(path: Path) -> str:
+        try:
+            return disc_kind([_disc_summary(source)["media_type"] for source in find_sources(path)])
+        except (ScanError, OSError):
+            return ""
+
+    def auto_title(path: Path, hint: str) -> tuple[dict[str, Any] | None, str]:
+        """自动选片名（设置中“自动按 IMDb 改名”打开时）：返回（片名, 说明）。先用种子标题，再用文件夹名。"""
+        if not cfg().auto_rename:
+            return None, ""
+        dataset = imdb_dataset()
+        if not dataset.path.is_file():
+            return None, "没有 IMDb 数据集，不自动选片名。可以在设置页面下载。"
+        reason = ""
+        for text in dict.fromkeys(t for t in (hint, path.stem if path.is_file() else path.name) if t):
+            hit, reason = dataset.confident(text)
+            if hit is not None:
+                title = {"title": hit.title, "original_title": hit.original_title, "original_language": "",
+                         "year": hit.year, "imdb_id": hit.imdb_id, "tmdb_url": None}
+                return title, f"自动选中片名：{hit.title}（{hit.year or '年份不详'}，{hit.imdb_id}），{reason}。"
+        return None, f"没有自动选片名：{reason}。保留原名，可以在来源页选好片名后重新处理。"
+
+    def submit_auto(path: Path, hint: str = "") -> Job:
+        """下载完成后的自动处理：有把握时按 IMDb 名改名，并在结果中给出 BHD 标题。"""
+        title, note = auto_title(path, hint)
+        extra: dict[str, Any] = {"auto_note": note} if note else {}
+        seed_name = ""
+        if title is not None:
+            extra |= {"title": title, "region": "", "edition": "", "auto_title": title["imdb_id"]}
+            if cfg().seed_dir is not None:
+                seed_name = ptp_name(title["title"], title["year"], disc_kind_of(path))
+        return submit_run(path, None, True, seed_name, extra)
+
+    app.state.submit_auto = submit_auto
 
     def job_output_dir(path: Path, seed_name: str) -> Path:
         """输出目录按发种名称命名（没有时按原名）。"""

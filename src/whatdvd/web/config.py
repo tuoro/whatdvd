@@ -82,6 +82,8 @@ class ServerConfig:
     token: str
     seed_dir: Path | None = None
     """发种目录：处理前用硬链接把盘放到这里，可以另起名字（必须和下载目录在同一个文件系统）。"""
+    auto_rename: bool = True
+    """自动按 IMDb 改名：有把握时自动选片名，发种目录中的文件夹用 IMDb 名，并给出 BHD 标题。"""
     token_source: str = "config"
     """config（配置文件）、env（环境变量）、file（之前保存的）、new（这次新生成并保存的）。"""
     token_file: Path | None = None
@@ -123,6 +125,7 @@ _SCHEMA: dict[tuple[str, str], type | tuple[type, ...]] = {
     ("", "roots"): list,
     ("", "output_dir"): str,
     ("", "seed_dir"): str,
+    ("", "auto_rename"): bool,
     ("", "temp_dir"): str,
     ("", "max_jobs"): int,
     ("screenshots", "count"): int,
@@ -165,6 +168,7 @@ EDITABLE: frozenset[tuple[str, str]] = frozenset(
         ("", "max_jobs"),
         ("", "temp_dir"),
         ("", "seed_dir"),
+        ("", "auto_rename"),
         *((table, key) for table, key in _SCHEMA if table in ("screenshots", "pixhost", "torrent", "post")),
         *((table, key) for table, key in _SCHEMA if table in ("qbittorrent", "jackett", "rutor", "tmdb")),
     }
@@ -451,6 +455,7 @@ def load_config(
         raise ConfigError(f"seed_dir 必须是绝对路径：{seed_dir}")
     return ServerConfig(
         seed_dir=_expand(seed_dir).absolute() if seed_dir else None,
+        auto_rename=flat.get(("", "auto_rename"), True),
         config_file=file,
         settings_file=settings_file,
         overridden=frozenset(key_name(key) for key in overrides),

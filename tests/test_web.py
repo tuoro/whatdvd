@@ -538,7 +538,7 @@ def test_imdb_dataset_update_and_lookup(tmp_path: Path, media: Path) -> None:
         assert [(r["kind"], r["title"], r["imdb_id"]) for r in found] == [("imdb", "Stalker", "tt0079944")]
         detail = client.get("/api/imdb/title/tt0079944", params={"disc": "DVD5"}).json()
         assert (detail["source"], detail["ptp_name"], detail["url"]) == ("IMDb", "Stalker.1979.DVD5", None)
-        assert "TMDB 中没有这部片" in detail["notes"][0]
+        assert detail["notes"] == []
         assert client.get("/api/imdb/title/tt0000009").status_code == 404
         assert client.get("/api/tmdb/search", params={"q": "tt0000009"}).json()["results"] == []
         # TMDB 的条目没有 IMDb 编号时，可以用 imdb 参数指定
@@ -575,6 +575,39 @@ def test_name_search_without_tmdb_key(tmp_path: Path, media: Path) -> None:
 
         db.unlink()
         assert client.get("/api/tmdb/search", params={"q": "x"}).status_code == 400
+
+
+def test_auto_rename_after_download(tmp_path: Path, media: Path) -> None:
+    """下载完成的自动处理：有把握时按 IMDb 名建硬链接、带上 BHD 用的片名；没有把握时保留原名并说明。"""
+    from test_imdb_dataset import _transport
+
+    from whatdvd.imdb_dataset import build
+
+    build(tmp_path / "state" / "imdb.db", lambda *a: None, base_url="https://imdb.test", transport=_transport())
+    make_file(media / "Иди и смотри (1985) DVD9" / "VIDEO_TS" / "VTS_01_1.VOB", 10)
+    config = ServerConfig(roots=(media.resolve(),), output_dir=tmp_path / "out", token=TOKEN, seed_dir=tmp_path / "seed",
+                          database=tmp_path / "state" / "whatdvd.db", settings_file=tmp_path / "settings.json")
+    app = create_app(config, runner=FakeRunner(fake_mktorrent, available=["mktorrent"]), background=False)
+    with TestClient(app, headers={"Authorization": f"Bearer {TOKEN}"}) as client:
+        info = client.get("/api/source", params={"path": str(media / "Иди и смотри (1985) DVD9")}).json()
+        assert info["suggested"]["imdb_id"] == "tt0091251"  # 来源页预先选中
+
+        def submit(path: Path, hint: str) -> Job:  # 在事件循环中调用（同 qB 同步时）
+            return client.portal.call(app.state.submit_auto, path, hint)  # type: ignore[union-attr]
+
+        job = submit(media / "Иди и смотри (1985) DVD9", "Иди и смотри / Come and See (1985) DVD9 | P")
+        assert job.params["seed_name"] == "Come.and.See.1985.DVD5"  # 测试用的盘只有 10 字节，按 DVD5 算
+        assert job.params["title"]["imdb_id"] == "tt0091251" and job.params["auto_title"] == "tt0091251"
+        assert "自动选中片名：Come and See" in job.params["auto_note"]
+
+        job = submit(media / "Movie A", "Совсем другое кино (2001) DVD9")
+        assert job.params["seed_name"] == "" and "title" not in job.params
+        assert "没有自动选片名" in job.params["auto_note"]
+
+        client.put("/api/settings", json={"auto_rename": False})
+        assert client.get("/api/source", params={"path": str(media / "Иди и смотри (1985) DVD9")}).json()["suggested"] is None
+        job = submit(media / "Иди и смотри (1985) DVD9", "")
+        assert job.params["seed_name"] == "" and "auto_note" not in job.params
 
 
 def test_imdb_update_error_is_reported(tmp_path: Path, media: Path) -> None:

@@ -102,6 +102,7 @@ class Harness:
         )
         self.jobs: dict[str, Job] = {}
         self.submitted: list[Path] = []
+        self.hints: list[str] = []  # 种子标题，用来自动选片名
         self.watcher = Watcher(
             self.config,
             Store(tmp_path / "state.db"),
@@ -111,8 +112,9 @@ class Harness:
             jackett=Jackett("http://jackett", "KEY", indexer="rutor", transport=transport),
         )
 
-    def submit(self, path: Path) -> Job:
+    def submit(self, path: Path, hint: str = "") -> Job:
         self.submitted.append(path)
+        self.hints.append(hint)
         job = Job("run", path, {"count": 10, "upload": True}, self.config.output_dir / path.name)
         self.jobs[job.id] = job
         return job
@@ -199,6 +201,7 @@ def test_sync_progress_then_process_then_done(h: Harness, services: FakeServices
     services.torrent(TORRENT_HASH, "stalledUP", 1.0, "/downloads/Film One")
     h.run(h.watcher.sync)
     assert h.submitted == [downloads / "Film One"]  # 按 path_map 映射到本机路径
+    assert h.hints == [record.title]  # 种子标题一起交给处理任务，用来自动选片名
     record = h.watcher.store.get(record_id)
     assert record is not None and record.status == "processing" and record.job_id in h.jobs
 

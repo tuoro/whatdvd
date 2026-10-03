@@ -153,3 +153,20 @@ def test_normalize(name: str, normalized: str) -> None:
     from whatdvd.imdb_dataset import normalize
 
     assert normalize(name) == normalized
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Иди и смотри (1985) DVD9", "tt0091251"),
+        ("Сталкер / Stalker (1979) DVD9 | P", "tt0079944"),
+        ("Два капитана 2 (1992) DVD5", "tt0183022"),
+        ("Сталкер (1990) DVD9", None),  # 年份对不上
+        ("Unknown Film (2001) DVD9", None),
+        ("Blade Runner DVD9", "tt0083658"),  # 没有年份，但只有一个结果
+    ],
+)
+def test_confident(dataset: ImdbDataset, text: str, expected: str | None) -> None:
+    hit, reason = dataset.confident(text)
+    assert (hit.imdb_id if hit else None) == expected
+    assert reason

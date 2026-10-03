@@ -83,7 +83,7 @@ class Watcher:
         config: ServerConfig,
         store: Store,
         *,
-        submit_run: Callable[[Path], Job],
+        submit_run: Callable[[Path, str], Job],  # （下载完成的路径, 种子标题）→ 处理任务；种子标题用来自动选片名
         get_job: Callable[[str], Job | None],
         qbit: QBittorrent | None = None,
         jackett: Jackett | None = None,
@@ -391,7 +391,7 @@ class Watcher:
                 error=f"下载完成，但 {local} {hint}。请检查 qbittorrent.path_map 和 roots。",
             )
             return
-        job = self._submit_run(resolved)
+        job = self._submit_run(resolved, record.title)
         self.store.update(
             record.id,
             status="processing",

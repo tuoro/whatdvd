@@ -31,7 +31,7 @@ from typing import Any
 
 import httpx
 
-from .release_names import search_variants
+from .release_names import guess_query, search_variants
 
 BASE_URL = "https://datasets.imdbws.com"
 FILES = ("title.basics.tsv.gz", "title.akas.tsv.gz")
@@ -154,6 +154,22 @@ class ImdbDataset:
         hits = list(found.values())
         hits.sort(key=lambda h: 0 if year and h.year and abs(h.year - year) <= 1 else 1)
         return hits[:limit]
+
+    def confident(self, text: str) -> tuple[ImdbTitle | None, str]:
+        """自动选片名：按种子标题或文件夹名猜搜索词，只有唯一一个年份对得上（相差一年以内）的结果才采用。
+        返回（结果, 说明）；没有把握时结果为 None，说明里写原因。"""
+        query, year = guess_query(text)
+        hits = self.find(query, year)
+        if year is None:
+            if len(hits) == 1:
+                return hits[0], f"按“{query}”找到唯一一个结果"
+            return None, f"“{query}”没有年份，找到 {len(hits)} 个结果，无法确定"
+        good = [h for h in hits if h.year and abs(h.year - year) <= 1]
+        if len(good) == 1:
+            return good[0], f"按“{query}”和年份 {year} 找到唯一一个结果"
+        if not good:
+            return None, f"IMDb 数据集中没有“{query}”（{year}）"
+        return None, f"“{query}”（{year}）有 {len(good)} 个同名同年的结果，无法确定"
 
     def title(self, imdb_id: str, original_language: str = "") -> ImdbTitle | None:
         """查不到或还没导入时为 None。original_language 来自 TMDB（数据集中没有语言）。"""

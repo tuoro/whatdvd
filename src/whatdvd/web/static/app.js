@@ -538,7 +538,7 @@ function titlePanel(path, info) {
         t.original_title && t.original_title !== t.title ? h("span", {}, ` · 原名 ${t.original_title}`) : null,
         t.url ? h("a", { href: t.url, target: "_blank", rel: "noopener noreferrer" }, "TMDB") : null,
         t.imdb_url ? h("a", { href: t.imdb_url, target: "_blank", rel: "noopener noreferrer" }, `IMDb ${t.imdb_id}`) : h("span", { class: "hint" }, "TMDB 中没有 IMDb 编号")),
-      h("p", { class: "hint" }, t.source === "IMDb" ? "片名、原名和年份来自 IMDb 数据集" : "片名来自 TMDB"),
+      h("p", { class: "hint" }, chosen.auto ? "已自动选中（按种子标题或文件夹名，在 IMDb 数据集中唯一一个年份对得上的），请核对" : t.source === "IMDb" ? "片名、原名和年份来自 IMDb 数据集" : "片名来自 TMDB"),
       ...(t.notes || []).map((n) => notice("warn", n)),
       h("dl", {},
         h("dt", {}, "PTP 发种名称"), h("dd", {}, h("code", {}, t.ptp_name),
@@ -552,6 +552,17 @@ function titlePanel(path, info) {
   };
   go.addEventListener("click", search);
   query.addEventListener("keydown", (event) => { if (event.key === "Enter") search(); });
+  // 自动按 IMDb 改名：有把握的片名预先选中，发种名称也填好
+  if (!state.titles.get(path) && info.suggested) {
+    const disc = `disc=${encodeURIComponent(info.disc_kind)}`;
+    api(`/api/imdb/title/${info.suggested.imdb_id}?${disc}`).then((detail) => {
+      if (state.titles.get(path)) return;
+      state.titles.set(path, { match: detail, region: "", edition: "", auto: true });
+      const seedBox = $("opt-seedname");
+      if (seedBox && !seedBox.value.trim()) seedBox.value = detail.ptp_name;
+      renderChosen();
+    }).catch(() => {});
+  }
   renderChosen();
   const from = info.guess.from === "release" ? "（按资源标题猜的）" : "（按文件夹名猜的）";
   return h("section", {}, heading,
@@ -993,7 +1004,8 @@ function renderSettings(data) {
       row("同时运行", number("max_jobs", v.max_jobs, 1, 8), "个任务；修改后立即生效"),
       row("ISO 临时目录", input("temp_dir", v.temp_dir, { placeholder: "留空使用系统临时目录" }), "ISO 解包会写入约 1 GB 的 VOB"),
       row("发种目录", input("seed_dir", v.seed_dir, { placeholder: "留空不使用，直接处理原始下载" }),
-        "处理和做种前用硬链接把盘放到这里，可以另起最外层文件夹名，原始下载不动。必须和下载目录在同一个文件系统（Docker 中在同一个挂载卷里）")),
+        "处理和做种前用硬链接把盘放到这里，可以另起最外层文件夹名，原始下载不动。必须和下载目录在同一个文件系统（Docker 中在同一个挂载卷里）"),
+      row("自动按 IMDb 改名", toggle("auto_rename", v.auto_rename, "按种子标题或文件夹名在 IMDb 数据集中找到唯一一个年份对得上的片名时，自动采用：发种目录中的文件夹用 IMDb 名，结果中给出 BHD 标题。没有把握时保留原名"))),
     section("qBittorrent", "填写地址即启用：下载“资源”页中选中的种子，并自动处理这个分类下下载完成的种子。只对接 Web API，不负责部署。",
       row("地址", h("span", { class: "inline" }, input("qbittorrent.url", v.qbittorrent.url, { placeholder: "例如 http://192.168.1.10:8080，留空不启用" }), qbTest), qbResult),
       row("用户名", input("qbittorrent.username", v.qbittorrent.username, { autocomplete: "off" })),
@@ -1131,6 +1143,7 @@ function collectSettings(ctl, v, pathMapText) {
   put("", "max_jobs", int("max_jobs"), v.max_jobs);
   put("", "temp_dir", ctl.temp_dir.value.trim(), v.temp_dir);
   put("", "seed_dir", ctl.seed_dir.value.trim(), v.seed_dir);
+  put("", "auto_rename", ctl.auto_rename.checked, v.auto_rename);
 
   const q = v.qbittorrent;
   put("qbittorrent", "url", ctl["qbittorrent.url"].value.trim(), q.url);
