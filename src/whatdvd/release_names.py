@@ -21,6 +21,19 @@ _NOISE = re.compile(
 )
 
 
+# NFKD 拆不开的字母
+_FOLD = str.maketrans({"ł": "l", "đ": "d", "ø": "o", "ß": "ss", "æ": "ae", "œ": "oe", "ı": "i", "þ": "th"})
+# 单独的罗马数字当作阿拉伯数字："Dva kapitana II" 和 "Два капитана 2" 能对上
+_ROMAN = {"ii": "2", "iii": "3", "iv": "4", "vi": "6", "vii": "7", "viii": "8", "ix": "9"}
+
+
+def normalize(name: str) -> str:
+    """查找用的片名：小写、ё 当作 е、去掉变音符号和标点。"Terminator 2: Judgment Day" → "terminator 2 judgment day"。"""
+    text = unicodedata.normalize("NFKD", name.casefold().replace("ё", "е").translate(_FOLD))
+    text = "".join(c for c in text if not unicodedata.combining(c)).replace("&", " and ")
+    return " ".join(_ROMAN.get(word, word) for word in re.sub(r"[^\w]+", " ", text).split())
+
+
 def guess_query(text: str) -> tuple[str, int | None]:
     """从文件夹名或种子标题猜 TMDB 搜索词和年份。
 
@@ -153,3 +166,31 @@ def bhd_title(
     parts += [str(year)] if year else []
     parts += [edition.strip(), region.strip(), standard or "", kind, "MPEG-2", audio or ""]
     return " ".join(p for p in parts if p)
+
+
+def folder_reflects_title(folder: str, titles: Sequence[str]) -> bool:
+    """文件夹名是否已经看得出片名（PTP《Site Policies About Modifying Files》：文件夹名要清楚写出片名，
+    不必完全一致，MONTY_PYTHON_HOLY_GRAIL 可以、MPHGRAIL 不行；只有缩写得看不出或不是原名、英文名时才改名）。
+
+    titles 为 IMDb 的英文名、原名等。文件夹名中的点、下划线当作空格，俄文文件夹名再按 IMDb 的写法转写一次
+    （俄语片 IMDb 的原名是转写，“Иди и смотри” 即原名 “Idi i smotri”）。
+    """
+    spaced = re.sub(r"[._]+", " ", folder)
+    candidates = {normalize(spaced), normalize(transliterate(spaced))}
+    for title in titles:
+        wanted = normalize(title)
+        if not wanted:
+            continue
+        for name in candidates:
+            padded = f" {name} "
+            at = padded.find(f" {wanted} ")
+            if at >= 0:
+                following = padded[at + len(wanted) + 2 :].split()[:1]
+                if not (following and following[0].isdigit() and len(following[0]) <= 2):  # "Predator 2" 不是 "Predator"
+                    return True
+            # 转写方式不同（"Juriev den" 和 "Yurev den"）：多个词的片名开头部分足够相近也算
+            if " " in wanted and len(wanted) >= 6 and any(
+                SequenceMatcher(None, wanted, name[: len(wanted) + extra]).ratio() >= 0.8 for extra in (-2, -1, 0, 1, 2)
+            ):
+                return True
+    return False

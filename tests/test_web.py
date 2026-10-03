@@ -595,10 +595,21 @@ def test_auto_rename_after_download(tmp_path: Path, media: Path) -> None:
         def submit(path: Path, hint: str) -> Job:  # 在事件循环中调用（同 qB 同步时）
             return client.portal.call(app.state.submit_auto, path, hint)  # type: ignore[union-attr]
 
+        # 文件夹名就是俄文原名（IMDb 原名 Idi i smotri 的写法）：看得出片名，保持原名，但 BHD 标题照样给出
         job = submit(media / "Иди и смотри (1985) DVD9", "Иди и смотри / Come and See (1985) DVD9 | P")
-        assert job.params["seed_name"] == "Come.and.See.1985.DVD5"  # 测试用的盘只有 10 字节，按 DVD5 算
+        assert job.params["seed_name"] == ""
         assert job.params["title"]["imdb_id"] == "tt0091251" and job.params["auto_title"] == "tt0091251"
-        assert "自动选中片名：Come and See" in job.params["auto_note"]
+        assert "自动选中片名：Come and See" in job.params["auto_note"] and "保持原名" in job.params["auto_note"]
+
+        # 文件夹名缩写得看不出片名：改成 IMDb 名
+        make_file(media / "IIS_DVD9" / "VIDEO_TS" / "VTS_01_1.VOB", 10)
+        job = submit(media / "IIS_DVD9", "Иди и смотри / Come and See (1985) DVD9 | P")
+        assert job.params["seed_name"] == "Come.and.See.1985.DVD5"  # 测试用的盘只有 10 字节，按 DVD5 算
+        assert "保持原名" not in job.params["auto_note"]
+        detail = client.get("/api/imdb/title/tt0091251", params={"folder": "IIS_DVD9"}).json()
+        assert detail["folder_ok"] is False
+        detail = client.get("/api/imdb/title/tt0091251", params={"folder": "Come.and.See.1985.PAL.DVD9"}).json()
+        assert detail["folder_ok"] is True
 
         job = submit(media / "Movie A", "Совсем другое кино (2001) DVD9")
         assert job.params["seed_name"] == "" and "title" not in job.params

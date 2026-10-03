@@ -117,3 +117,30 @@ def test_audio_missing() -> None:
 )
 def test_bhd_title(kwargs: dict[str, object], title: str) -> None:
     assert bhd_title(**kwargs) == title  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("folder", "titles", "reflects"),
+    [
+        # PTP《Site Policies About Modifying Files》的例子：不必完全一致，但要看得出片名
+        ("MONTY_PYTHON_HOLY_GRAIL", ["Monty Python and the Holy Grail"], True),
+        ("MPHGRAIL", ["Monty Python and the Holy Grail"], False),
+        # rutor 上实际的文件夹名
+        ("Imaginary_Heroes", ["Imaginary Heroes"], True),
+        ("Saving.Private.Ryan.1998.DVD9.(custom)", ["Saving Private Ryan"], True),
+        ("Juriev.den.2008.O.DVD_RUSSFILM", ["St. George's Day", "Yurev den"], True),  # 转写方式不同
+        ("Иди и смотри (1985) DVD9", ["Come and See", "Idi i smotri"], True),  # 俄文原名
+        ("NAPOLEON", ["Napoléon"], True),
+        ("2k2", ["Dva kapitana II"], False),
+        ("VIDEO_TS", ["Resident Evil: Degeneration"], False),
+        ("Жизнь как чудо", ["Life Is a Miracle", "Zivot je cudo"], False),  # 俄文译名，不是原名
+        ("Терминатор 2", ["Terminator 2: Judgment Day"], False),
+        ("Predator 2", ["Predator"], False),  # 续集编号对不上
+        ("Alien", ["Aliens"], False),
+        ("Rocky.1976.DVD9", ["Rocky"], True),
+    ],
+)
+def test_folder_reflects_title(folder: str, titles: list[str], reflects: bool) -> None:
+    from whatdvd.release_names import folder_reflects_title
+
+    assert folder_reflects_title(folder, titles) is reflects

@@ -33,7 +33,7 @@ from ..indexer import IndexerError, Jackett
 from ..qbit import QBittorrent, QbitError
 from ..resolution import ASPECT_MODES
 from ..naming import clean_title
-from ..release_names import audio_from_mediainfo, bhd_title, disc_kind, guess_query, ptp_name
+from ..release_names import audio_from_mediainfo, bhd_title, disc_kind, folder_reflects_title, guess_query, ptp_name
 from ..rutor import Rutor
 from ..seedlink import LinkError, check_name, link_tree, same_filesystem, target_name
 from ..store import Status, Store
@@ -815,7 +815,7 @@ def create_app(
             notes.append("IMDb 数据集是旧版本导入的，不能按片名查找。请在设置页面点“更新数据集”。")
         return {"results": results, "dataset": info is not None, "notes": notes}
 
-    async def site_names(match: Match | None, imdb_id: str | None, disc: str) -> dict[str, Any]:
+    async def site_names(match: Match | None, imdb_id: str | None, disc: str, folder: str = "") -> dict[str, Any]:
         """片名以 IMDb 数据集为准（PTP 要求和 IMDb 一致），没有时用 TMDB 的；给出 PTP 发种名称和 BHD 标题开头。"""
         # TMDB 的原始语言只在 IMDb 编号确实属于这个 TMDB 条目时可用（用户可能指定了别的编号）
         language = match.original_language if match and match.imdb_id in (None, imdb_id) else ""
@@ -850,17 +850,21 @@ def create_app(
             **base, "imdb_id": imdb_id, "title": title, "original_title": original, "year": year, "source": source,
             "tmdb_title": match.title if match else None, "notes": notes, "ptp_name": ptp_name(title, year, disc),
             "bhd_head": head,
+            # 原文件夹名已经看得出片名时不必改名（PTP《Site Policies About Modifying Files》）
+            "folder_ok": bool(folder) and folder_reflects_title(folder, [title, original]),
         }
 
     @app.get("/api/imdb/title/{imdb_id}", dependencies=auth)
-    async def imdb_title(imdb_id: Annotated[str, PathParam(pattern=r"^tt\d{5,10}$")], disc: str = "") -> dict[str, Any]:
-        """TMDB 中没有的片：只用 IMDb 数据集。"""
-        return await site_names(None, imdb_id, disc)
+    async def imdb_title(
+        imdb_id: Annotated[str, PathParam(pattern=r"^tt\d{5,10}$")], disc: str = "", folder: str = ""
+    ) -> dict[str, Any]:
+        """TMDB 中没有的片：只用 IMDb 数据集。folder 为原文件夹名，用来判断要不要改名。"""
+        return await site_names(None, imdb_id, disc, folder)
 
     @app.get("/api/tmdb/{kind}/{tmdb_id}", dependencies=auth)
     async def tmdb_details(
         kind: Literal["movie", "tv"], tmdb_id: int, disc: str = "",
-        imdb: Annotated[str | None, Query(pattern=r"^tt\d{5,10}$")] = None,
+        imdb: Annotated[str | None, Query(pattern=r"^tt\d{5,10}$")] = None, folder: str = "",
     ) -> dict[str, Any]:
         """详情和按站点规则给出的名字。disc 为盘型（例如 DVD9、2xDVD9）；imdb 为用户给的 IMDb 编号（TMDB 中没有时）。"""
         client = tmdb_client()
@@ -870,7 +874,7 @@ def create_app(
             raise HTTPException(502, str(error)) from None
         finally:
             client.close()
-        return await site_names(match, imdb if imdb else match.imdb_id, disc)
+        return await site_names(match, imdb if imdb else match.imdb_id, disc, folder)
 
     # ---------- IMDb 数据集 ----------
 
@@ -1032,7 +1036,11 @@ def create_app(
         seed_name = ""
         if title is not None:
             extra |= {"title": title, "region": "", "edition": "", "auto_title": title["imdb_id"]}
-            if cfg().seed_dir is not None:
+            folder = path.stem if path.is_file() else path.name
+            if folder_reflects_title(folder, [title["title"], title["original_title"]]):
+                # PTP《Site Policies About Modifying Files》：文件夹名看得出片名就不改，保持和来源一致
+                extra["auto_note"] = f"{note} 文件夹名“{folder}”已经看得出片名，保持原名。"
+            elif cfg().seed_dir is not None:
                 seed_name = ptp_name(title["title"], title["year"], disc_kind_of(path))
         return submit_run(path, None, True, seed_name, extra)
 

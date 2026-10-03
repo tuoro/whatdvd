@@ -469,6 +469,7 @@ function titlePanel(path, info) {
     return h("section", {}, heading, notice("", "在设置页面填写 TMDB API Key 或下载 IMDb 数据集后，可以在这里查片名，按英文名和原名给出 PTP 发种名称和 BHD 标题。"));
   }
   const placeholder = "片名（英文、原名或俄文都可以），或粘贴 IMDb 链接";
+  const folderName = basename(path).replace(/\.iso$/i, "");
   const query = h("input", { type: "search", value: info.guess.query, placeholder, spellcheck: "false" });
   const year = h("input", { type: "number", value: info.guess.year || "", placeholder: "年份", min: 1870, max: 2100 });
   const go = h("button", { type: "button", class: "btn small glass" }, icon("search"), "查 TMDB");
@@ -500,14 +501,14 @@ function titlePanel(path, info) {
   const choose = async (m, button) => {
     button.disabled = true;
     try {
-      const disc = `disc=${encodeURIComponent(info.disc_kind)}`;
+      const disc = `disc=${encodeURIComponent(info.disc_kind)}&folder=${encodeURIComponent(folderName)}`;
       const detail = await api(m.kind === "imdb"
         ? `/api/imdb/title/${m.imdb_id}?${disc}`
         : `/api/tmdb/${m.kind}/${m.id}?${disc}${m.imdb_id ? `&imdb=${m.imdb_id}` : ""}`);
       const previous = state.titles.get(path);
       state.titles.set(path, { match: detail, region: previous?.region || "", edition: previous?.edition || "" });
       const seedBox = $("opt-seedname");
-      if (seedBox && !seedBox.value.trim()) seedBox.value = detail.ptp_name;
+      if (seedBox && !seedBox.value.trim() && !detail.folder_ok) seedBox.value = detail.ptp_name;
       renderChosen();
     } catch (error) {
       if (!(error instanceof AuthError)) toast(error.message);
@@ -540,6 +541,7 @@ function titlePanel(path, info) {
         t.imdb_url ? h("a", { href: t.imdb_url, target: "_blank", rel: "noopener noreferrer" }, `IMDb ${t.imdb_id}`) : h("span", { class: "hint" }, "TMDB 中没有 IMDb 编号")),
       h("p", { class: "hint" }, chosen.auto ? "已自动选中（按种子标题或文件夹名，在 IMDb 数据集中唯一一个年份对得上的），请核对" : t.source === "IMDb" ? "片名、原名和年份来自 IMDb 数据集" : "片名来自 TMDB"),
       ...(t.notes || []).map((n) => notice("warn", n)),
+      t.folder_ok ? notice("", `原文件夹名“${basename(path)}”已经看得出片名，按 PTP 的规定保持原名，不用改（发种名称留空）。`) : null,
       h("dl", {},
         h("dt", {}, "PTP 发种名称"), h("dd", {}, h("code", {}, t.ptp_name),
           state.config.seed_dir ? fill : h("span", { class: "hint" }, "改文件夹名需要先在设置页面填写发种目录"),
@@ -554,12 +556,12 @@ function titlePanel(path, info) {
   query.addEventListener("keydown", (event) => { if (event.key === "Enter") search(); });
   // 自动按 IMDb 改名：有把握的片名预先选中，发种名称也填好
   if (!state.titles.get(path) && info.suggested) {
-    const disc = `disc=${encodeURIComponent(info.disc_kind)}`;
+    const disc = `disc=${encodeURIComponent(info.disc_kind)}&folder=${encodeURIComponent(folderName)}`;
     api(`/api/imdb/title/${info.suggested.imdb_id}?${disc}`).then((detail) => {
       if (state.titles.get(path)) return;
       state.titles.set(path, { match: detail, region: "", edition: "", auto: true });
       const seedBox = $("opt-seedname");
-      if (seedBox && !seedBox.value.trim()) seedBox.value = detail.ptp_name;
+      if (seedBox && !seedBox.value.trim() && !detail.folder_ok) seedBox.value = detail.ptp_name;
       renderChosen();
     }).catch(() => {});
   }

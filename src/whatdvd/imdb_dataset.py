@@ -20,7 +20,6 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
-import unicodedata
 import threading
 import time
 import zlib
@@ -31,7 +30,7 @@ from typing import Any
 
 import httpx
 
-from .release_names import guess_query, search_variants
+from .release_names import guess_query, normalize, search_variants
 
 BASE_URL = "https://datasets.imdbws.com"
 FILES = ("title.basics.tsv.gz", "title.akas.tsv.gz")
@@ -72,17 +71,6 @@ def _int(value: str) -> int | None:
     return int(value) if value.isdigit() else None
 
 
-# NFKD 拆不开的字母
-_FOLD = str.maketrans({"ł": "l", "đ": "d", "ø": "o", "ß": "ss", "æ": "ae", "œ": "oe", "ı": "i", "þ": "th"})
-# 单独的罗马数字当作阿拉伯数字："Dva kapitana II" 和 "Два капитана 2" 能对上
-_ROMAN = {"ii": "2", "iii": "3", "iv": "4", "vi": "6", "vii": "7", "viii": "8", "ix": "9"}
-
-
-def normalize(name: str) -> str:
-    """查找用的片名：小写、ё 当作 е、去掉变音符号和标点。"Terminator 2: Judgment Day" → "terminator 2 judgment day"。"""
-    text = unicodedata.normalize("NFKD", name.casefold().replace("ё", "е").translate(_FOLD))
-    text = "".join(c for c in text if not unicodedata.combining(c)).replace("&", " and ")
-    return " ".join(_ROMAN.get(word, word) for word in re.sub(r"[^\w]+", " ", text).split())
 
 
 class ImdbDataset:
