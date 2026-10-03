@@ -40,8 +40,8 @@ def _gz(lines: list[str]) -> bytes:
     return gzip.compress(("\n".join(lines) + "\n").encode())
 
 
-def _transport(basics: list[str] = BASICS, status: int = 200) -> httpx.MockTransport:
-    files = {"/title.basics.tsv.gz": _gz(basics), "/title.akas.tsv.gz": _gz(AKAS)}
+def _transport(basics: list[str] = BASICS, status: int = 200, akas: list[str] = AKAS) -> httpx.MockTransport:
+    files = {"/title.basics.tsv.gz": _gz(basics), "/title.akas.tsv.gz": _gz(akas)}
 
     def handler(request: httpx.Request) -> httpx.Response:
         if status != 200:
@@ -170,3 +170,37 @@ def test_confident(dataset: ImdbDataset, text: str, expected: str | None) -> Non
     hit, reason = dataset.confident(text)
     assert (hit.imdb_id if hit else None) == expected
     assert reason
+
+
+# 同名同年的几个结果（IMDb 上的实际条目）
+SAME_NAME = [
+    "tt1798709\tmovie\tHer\tHer\t0\t2013\t\\N\t126\tDrama",
+    "tt3512038\tvideo\tHer\tHer\t0\t2013\t\\N\t\\N\tShort",
+    "tt2562232\tmovie\tBirdman or (The Unexpected Virtue of Ignorance)\tBirdman or (The Unexpected Virtue of Ignorance)\t0\t2014\t\\N\t119\tComedy",
+    "tt5130912\tvideo\tBirdman\tBirdman\t0\t2014\t\\N\t\\N\tShort",
+    "tt0482606\tmovie\tThe Strangers\tThe Strangers\t0\t2008\t\\N\t86\tHorror",
+    "tt9000001\tmovie\tThe Strangers\tThe Strangers\t0\t2007\t\\N\t90\tDrama",
+    "tt0882977\tmovie\tSnitch\tSnitch\t0\t2013\t\\N\t112\tAction",
+    "tt30088382\tmovie\tSnitch\tSnitch\t0\t2013\t\\N\t95\tDrama",
+    "tt3062096\tmovie\tInferno\tInferno\t0\t2016\t\\N\t121\tAction",
+    "tt3855900\ttvMiniSeries\tInferno\tInferno\t0\t2016\t\\N\t\\N\tDrama",
+    "tt9149142\tmovie\tInferno\tInferno\t0\t2017\t\\N\t\\N\tDrama",
+]
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("Она / Her (2013) DVD9", "tt1798709"),  # 电影和同名 video：选电影
+        ("Незнакомцы / The Strangers (2008) DVD9", "tt0482606"),  # 年份完全一致的
+        ("Инферно / Inferno (2016) DVD5", "tt3062096"),  # 年份完全一致，再选电影
+        ("Стукач / Snitch (2013) DVD5", None),  # 两部同名同年的电影
+        ("Бёрдмэн / Birdman (2014) DVD9", None),  # 靠别名对上的电影和同名 video：分不出来，不选
+    ],
+)
+def test_confident_breaks_ties(tmp_path: Path, text: str, expected: str | None) -> None:
+    akas = [*AKAS, "tt2562232\t1\tBirdman\tUS\t\\N\timdbDisplay\t\\N\t0"]
+    build(tmp_path / "imdb.db", lambda *a: None, base_url="https://imdb.test",
+          transport=_transport([*BASICS, *SAME_NAME], akas=akas))
+    hit, reason = ImdbDataset(tmp_path / "imdb.db").confident(text)
+    assert (hit.imdb_id if hit else None) == expected, reason

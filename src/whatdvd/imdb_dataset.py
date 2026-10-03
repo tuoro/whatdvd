@@ -157,6 +157,24 @@ class ImdbDataset:
             return good[0], f"按“{query}”和年份 {year} 找到唯一一个结果"
         if not good:
             return None, f"IMDb 数据集中没有“{query}”（{year}）"
+        # 同名同年的有好几个：依次只留年份完全一致的、片名本身就是这个名字的（不是靠别名对上的）、电影，
+        # 只剩一个才采用。2026 年 10 月 rutor 上 600 个 DVD 标题中这样的 54 个，例如 Her (2013) 的电影和同名 video
+        names = {normalize(v) for v in search_variants(query)}
+        steps: list[tuple[str, Callable[[ImdbTitle], bool]]] = [
+            ("年份完全一致", lambda h: h.year == year),
+            ("片名相同", lambda h: bool(names & {normalize(h.primary_title), normalize(h.original_title)})),
+            ("是电影", lambda h: h.kind == "movie"),
+        ]
+        used: list[str] = []
+        for label, keep in steps:
+            narrowed = [h for h in good if keep(h)]
+            if label == "片名相同" and any(h.kind == "movie" for h in good) and not any(h.kind == "movie" for h in narrowed):
+                # 靠别名对上的电影和同名的 video 等：Birdman (2014) 该选电影，Saving Santa (2013) 该选 video，分不出来
+                break
+            if narrowed and len(narrowed) < len(good):
+                good, used = narrowed, [*used, label]
+            if len(good) == 1:
+                return good[0], f"按“{query}”和年份 {year} 找到 {len(hits)} 个结果，按{'、'.join(used)}选出一个"
         return None, f"“{query}”（{year}）有 {len(good)} 个同名同年的结果，无法确定"
 
     def title(self, imdb_id: str, original_language: str = "") -> ImdbTitle | None:
