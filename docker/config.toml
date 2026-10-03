@@ -6,7 +6,7 @@ port = 26873
 token_file = "/output/.whatdvd/token"
 roots = ["/media"]
 output_dir = "/output"
-# 发种目录（硬链接）：必须和下载目录在同一个挂载卷里，见 docker-compose.yml 中的说明
+# 发种目录（硬链接，也可以在设置页面填写）：必须和下载目录在同一个挂载卷里，见 docker-compose.yml 中的说明
 # seed_dir = "/data/seed"
 # ISO 解包会临时写入约 1 GB 的 VOB，放在输出卷里，避免占用容器的可写层或内存
 temp_dir = "/output/.tmp"

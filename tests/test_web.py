@@ -411,7 +411,7 @@ def test_seed_dir_rename_torrent_and_add_to_qbit(tmp_path: Path, media: Path) ->
 def test_seed_name_requires_seed_dir(authed: TestClient, media: Path) -> None:
     body = {"kind": "torrent", "path": str(media / "Movie A"), "piece_length": 24, "seed_name": "Film"}
     response = authed.post("/api/jobs", json=body)
-    assert response.status_code == 400 and "seed_dir" in response.json()["detail"]
+    assert response.status_code == 400 and "发种目录" in response.json()["detail"]
     job = wait_job(authed, authed.post("/api/jobs", json={**body, "seed_name": ""}).json()["id"])
     assert job["result"]["seed_path"] == str((media / "Movie A").resolve())  # 没有发种目录时用原始下载
     assert authed.post(f"/api/jobs/{job['id']}/seed").status_code == 404  # 没有配置 qBittorrent
@@ -445,6 +445,21 @@ def test_tmdb_lookup(tmp_path: Path, media: Path) -> None:
 
         bad = {"kind": "run", "path": str(media / "Movie A"), "count": 3, "title": {"title": "X", "imdb_id": "nope"}}
         assert client.post("/api/jobs", json=bad).status_code == 422
+
+
+def test_seed_dir_in_settings_page(settings_client: tuple[TestClient, Path], tmp_path: Path) -> None:
+    """发种目录可以在设置页面填写，保存后立即生效。"""
+    client, _ = settings_client
+    assert client.get("/api/settings").json()["values"]["seed_dir"] == ""
+    assert client.get("/api/config").json()["seed_dir"] is None
+    seed = tmp_path / "seed"
+    data = client.put("/api/settings", json={"seed_dir": str(seed)}).json()
+    assert data["values"]["seed_dir"] == str(seed) and "seed_dir" in data["overridden"]
+    status = client.get("/api/config").json()["seed_dir"]
+    assert status["path"] == str(seed) and status["error"] is None and seed.is_dir()
+    response = client.put("/api/settings", json={"seed_dir": "relative/seed"})
+    assert response.status_code == 400 and "绝对路径" in response.json()["detail"]
+    assert client.put("/api/settings", json={"seed_dir": ""}).json()["values"]["seed_dir"] == ""
 
 
 def test_tmdb_requires_key(authed: TestClient, media: Path) -> None:

@@ -525,7 +525,7 @@ function titlePanel(path, info) {
         t.imdb_url ? h("a", { href: t.imdb_url, target: "_blank", rel: "noopener noreferrer" }, `IMDb ${t.imdb_id}`) : h("span", { class: "hint" }, "TMDB 中没有 IMDb 编号")),
       h("dl", {},
         h("dt", {}, "PTP 发种名称"), h("dd", {}, h("code", {}, t.ptp_name),
-          state.config.seed_dir ? fill : h("span", { class: "hint" }, "改文件夹名需要在配置文件中设置发种目录（seed_dir）"),
+          state.config.seed_dir ? fill : h("span", { class: "hint" }, "改文件夹名需要先在设置页面填写发种目录"),
           copyButton("复制", async () => t.ptp_name)),
         h("dt", {}, "BHD 标题"), h("dd", {}, bhd, h("span", { class: "hint" }, "制式和音轨在生成截图后补全，任务结果中给出完整标题")),
         h("dt", {}, "版本"), h("dd", {}, field("edition", "可留空，例如 Director's Cut")),
@@ -974,14 +974,16 @@ function renderSettings(data) {
         v.post.template ? `配置文件中指定了模板文件 ${v.post.template}；这里填写后优先使用这里的内容。` : null)),
     section("任务", null,
       row("同时运行", number("max_jobs", v.max_jobs, 1, 8), "个任务；修改后立即生效"),
-      row("ISO 临时目录", input("temp_dir", v.temp_dir, { placeholder: "留空使用系统临时目录" }), "ISO 解包会写入约 1 GB 的 VOB")),
+      row("ISO 临时目录", input("temp_dir", v.temp_dir, { placeholder: "留空使用系统临时目录" }), "ISO 解包会写入约 1 GB 的 VOB"),
+      row("发种目录", input("seed_dir", v.seed_dir, { placeholder: "留空不使用，直接处理原始下载" }),
+        "处理和做种前用硬链接把盘放到这里，可以另起最外层文件夹名，原始下载不动。必须和下载目录在同一个文件系统（Docker 中在同一个挂载卷里）")),
     section("qBittorrent", "填写地址即启用：下载“资源”页中选中的种子，并自动处理这个分类下下载完成的种子。只对接 Web API，不负责部署。",
       row("地址", h("span", { class: "inline" }, input("qbittorrent.url", v.qbittorrent.url, { placeholder: "例如 http://192.168.1.10:8080，留空不启用" }), qbTest), qbResult),
       row("用户名", input("qbittorrent.username", v.qbittorrent.username, { autocomplete: "off" })),
       row("密码", secret("qbittorrent.password", v.qbittorrent.password_set, "")),
       row("分类", input("qbittorrent.category", v.qbittorrent.category), "这个分类中下载完成的种子会被自动处理"),
       row("做种分类", input("qbittorrent.seed_category", v.qbittorrent.seed_category),
-        `“添加到 qB 做种”用的分类，必须和上面的分类不同。发种目录：${state.config.seed_dir ? state.config.seed_dir.path : "未设置（在配置文件中设置 seed_dir）"}`),
+        "“添加到 qB 做种”用的分类，必须和上面的分类不同"),
       row("保存路径", input("qbittorrent.save_path", v.qbittorrent.save_path, { placeholder: "qB 中的路径；留空用分类或 qB 的默认路径" })),
       row("路径映射", area("qbittorrent.path_map", pathMap, 2, "/downloads = /media/qb"),
         `${PATH_MAP_HINT}。两边看到的路径一样时留空。映射后的目录必须在允许浏览的目录内。`),
@@ -1070,6 +1072,7 @@ function collectSettings(ctl, v, pathMapText) {
   put("post", "template_text", ctl["post.template_text"].value.trim() ? ctl["post.template_text"].value : "", v.post.template_text);
   put("", "max_jobs", int("max_jobs"), v.max_jobs);
   put("", "temp_dir", ctl.temp_dir.value.trim(), v.temp_dir);
+  put("", "seed_dir", ctl.seed_dir.value.trim(), v.seed_dir);
 
   const q = v.qbittorrent;
   put("qbittorrent", "url", ctl["qbittorrent.url"].value.trim(), q.url);

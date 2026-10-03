@@ -164,6 +164,7 @@ EDITABLE: frozenset[tuple[str, str]] = frozenset(
     {
         ("", "max_jobs"),
         ("", "temp_dir"),
+        ("", "seed_dir"),
         *((table, key) for table, key in _SCHEMA if table in ("screenshots", "pixhost", "torrent", "post")),
         *((table, key) for table, key in _SCHEMA if table in ("qbittorrent", "jackett", "rutor", "tmdb")),
     }
@@ -446,6 +447,8 @@ def load_config(
 
     temp_dir = flat.get(("", "temp_dir"))
     seed_dir = flat.get(("", "seed_dir"), "").strip()
+    if seed_dir and not _expand(seed_dir).is_absolute():
+        raise ConfigError(f"seed_dir 必须是绝对路径：{seed_dir}")
     return ServerConfig(
         seed_dir=_expand(seed_dir).absolute() if seed_dir else None,
         config_file=file,

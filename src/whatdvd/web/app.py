@@ -94,6 +94,7 @@ def settings_values(c: ServerConfig) -> dict[str, Any]:
     return {
         "max_jobs": c.max_jobs,
         "temp_dir": str(c.temp_dir) if c.temp_dir else "",
+        "seed_dir": str(c.seed_dir) if c.seed_dir else "",
         "screenshots": {"count": c.screenshot_count, "aspect": c.aspect, "dark_filter": c.dark_filter},
         "pixhost": {"domain": c.pixhost_domain, "proxy": c.proxy or ""},
         "torrent": {"announces": list(c.announces), "piece_length": c.piece_length},
@@ -858,7 +859,7 @@ def create_app(
         seed_name = body.seed_name.strip()
         if seed_name:
             if cfg().seed_dir is None:
-                raise HTTPException(400, "改发种名称需要先在配置文件中设置发种目录（seed_dir）")
+                raise HTTPException(400, "改发种名称需要先在设置页面填写发种目录")
             try:
                 check_name(seed_name)
             except LinkError as error:
