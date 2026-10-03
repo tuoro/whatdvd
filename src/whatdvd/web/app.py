@@ -30,6 +30,7 @@ from ..runner import Runner, SubprocessRunner
 from ..sources import find_sources, is_iso
 from ..checks import describe_extra_files, find_extra_files
 from ..dupes import existing_dvds
+from ..upload_kit import KitDisc, build_kits
 from ..ifo_info import SampleLog, read_vmg
 from ..imdb_dataset import Cancelled, DatasetError, ImdbDataset, Progress, build
 from ..indexer import IndexerError, Jackett, Release, film_categories
@@ -50,6 +51,7 @@ from .config import (
     SECRETS,
     ConfigError,
     ServerConfig,
+    SiteConfig,
     key_name,
     load_config,
     read_settings,
@@ -98,6 +100,17 @@ class JackettTest(BaseModel):
     """None 表示用已保存的 API Key。"""
 
 
+def _keep_announces(items: list[Any], current: tuple[SiteConfig, ...]) -> list[Any]:
+    """浏览器拿不到 announce（含 passkey）：提交的站点没有 announce 时沿用原来的，为 "" 时清空。"""
+    old = {site.id: site.announce for site in current}
+    kept = []
+    for item in items:
+        if isinstance(item, dict) and "announce" not in item and old.get(str(item.get("id"))):
+            item = {**item, "announce": old[str(item.get("id"))]}
+        kept.append(item)
+    return kept
+
+
 def settings_values(c: ServerConfig) -> dict[str, Any]:
     """设置页面中可以修改的项的当前值；密码和 API Key 只返回是否已设置。"""
     qb, jk = c.qbit, c.jackett
@@ -135,7 +148,9 @@ def settings_values(c: ServerConfig) -> dict[str, Any]:
             "films_only": jk.films_only if jk else True,
         },
         "tmdb": {"api_key_set": bool(c.tmdb_api_key)},
-        "sites": [asdict(site) for site in c.sites],
+        # announce 含 passkey：只说有没有设置
+        "sites": [{**{k: v for k, v in asdict(site).items() if k != "announce"}, "announce_set": bool(site.announce)}
+                  for site in c.sites],
     }
 
 
@@ -169,6 +184,8 @@ class TorrentRequest(BaseModel):
     announces: list[str] = []
     piece_length: int = Field(ge=PIECE_LENGTH_RANGE.start, le=PIECE_LENGTH_RANGE.stop - 1)
     seed_name: str = ""
+    site: str = ""
+    """用设置里这个站点的 announce 地址（含 passkey，只在服务端）；为空时用 announces。"""
 
     @field_validator("announces")
     @classmethod
@@ -238,6 +255,19 @@ def _site_names(result: RunResult, params: dict[str, Any]) -> dict[str, Any] | N
     )
     return {"bhd": bhd, "audio": audio, "imdb_id": chosen.get("imdb_id"), "tmdb_url": chosen.get("tmdb_url"),
             "kind": kind, "standard": first.analysis.standard}
+
+
+def _kit_discs(result: RunResult, serialized: dict[str, Any]) -> list[KitDisc]:
+    """发种清单用的每张盘：VOB 名、MediaInfo、上传成功的截图（直链，图床页面）、处理时的提示。"""
+    discs = []
+    for disc, item in zip(result.discs, serialized["discs"], strict=True):
+        if disc.analysis is None or disc.output is None or not disc.output.mediainfo.is_file():
+            continue
+        shots = [(u.image.direct_url, u.image.page_url) for u in disc.uploads if u.image is not None]
+        discs.append(KitDisc(name=disc.analysis.disc.name, vob=disc.analysis.disc.vob.name,
+                             report=disc.output.mediainfo.read_text(encoding="utf-8"), shots=shots,
+                             warnings=list(item.get("warnings", []))))
+    return discs
 
 
 def _serialize_run(result: RunResult) -> dict[str, Any]:
@@ -484,6 +514,7 @@ def create_app(
             "dark_filter": c.dark_filter,
             "pixhost_domain": c.pixhost_domain,
             "announces": list(c.announces),
+            "tracker_sites": [{"id": s.id, "name": s.name} for s in c.sites if s.enabled and s.announce],
             "piece_length": c.piece_length,
             "piece_length_range": [PIECE_LENGTH_RANGE.start, PIECE_LENGTH_RANGE.stop - 1],
             "listen": f"{c.host}:{c.port}",
@@ -575,6 +606,8 @@ def create_app(
                 if key not in SECRETS:
                     overrides.pop(key, None)
             else:
+                if key == ("sites", "list") and isinstance(value, list):
+                    value = _keep_announces(value, cfg().sites)
                 overrides[key] = value
         await apply_settings(overrides)
         return settings_payload()
@@ -1162,7 +1195,17 @@ def create_app(
                     reporter.info(f"查重（{site['name']}）：{mark}{item['title']}")
                 if not site["error"] and not site["items"]:
                     reporter.info(f"查重（{site['name']}）：没有这部片的 DVD 原盘")
-        return {**serialized, "seed_path": str(path), "names": names, "dupes": dupes}
+        kits = build_kits(cfg().sites, names, job.params.get("title"), job.params, _kit_discs(result, serialized), dupes)
+        return {**serialized, "seed_path": str(path), "names": names, "dupes": dupes, "kits": kits}
+
+    def site_announces(params: dict[str, Any]) -> list[str]:
+        """任务参数里只存站点 id：announce 含 passkey，不进任务记录（会发给浏览器）。"""
+        if not params.get("site"):
+            return list(params["announces"])
+        site = next((s for s in cfg().sites if s.id == params["site"]), None)
+        if site is None or not site.announce:
+            raise ValueError(f"站点“{params['site']}”没有设置 announce 地址")
+        return [site.announce]
 
     def torrent_worker(job: Job, reporter: JobReporter) -> dict[str, Any]:
         check_tools(runner, ["mktorrent"])
@@ -1176,7 +1219,7 @@ def create_app(
             runner,
             path,
             job.output_dir,
-            announces=job.params["announces"],
+            announces=site_announces(job.params),
             piece_length=job.params["piece_length"],
         )
         reporter.info(f"种子：{output.name}（用时 {time.monotonic() - started:.0f} 秒）")
@@ -1259,8 +1302,12 @@ def create_app(
                 extra = {"title": body.title.model_dump(), "region": body.region.strip(), "edition": body.edition.strip()}
             job = submit_run(path, body.count, body.upload, seed_name, extra)
         else:
+            site = body.site.strip()
+            if site and not any(s.id == site and s.announce for s in cfg().sites):
+                raise HTTPException(400, f"站点“{site}”没有设置 announce 地址，请先在设置页面填写")
             params: dict[str, Any] = {
-                "announces": body.announces, "piece_length": body.piece_length, "seed_name": seed_name,
+                "announces": [] if site else body.announces, "piece_length": body.piece_length, "seed_name": seed_name,
+                "site": site,
             }
             job = manager.submit(Job("torrent", path, params, job_output_dir(path, seed_name)), torrent_worker)
         return job.summary()

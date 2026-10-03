@@ -28,3 +28,15 @@ def build_report(runner: Runner, vob: Path, ifo: Path | None, root: Path) -> str
         # jietu 用 `echo -e "\n\n"` 分隔，写出的是三个换行符。
         report += "\n\n\n" + mediainfo(runner, ifo, root)
     return report
+
+
+def split_report(report: str) -> tuple[str, str | None]:
+    """build_report 的输出拆回（VOB 的 MediaInfo，IFO 的 MediaInfo）：IFO 部分从 Complete name 为 .IFO 的
+    General 段开始；没有 IFO 部分时第二项为 None。"""
+    lines = report.split("\n")
+    for index, line in enumerate(lines):
+        if line.strip() == "General" and index + 1 < len(lines):
+            name = lines[index + 1]
+            if name.lstrip().startswith("Complete name") and name.rstrip().upper().endswith(".IFO"):
+                return "\n".join(lines[:index]).rstrip() + "\n", "\n".join(lines[index:]).rstrip() + "\n"
+    return report, None

@@ -174,7 +174,7 @@ films_only = true        # 只要影视类
 
 片名确定（有 IMDb 编号）后，按 IMDb 编号在站点上查这部片已有的 DVD 原盘，只读，不上传：
 
-- 在设置页面的“站点”一节管理要发种的站点：名称、类型（UNIT3D、PTP、BHD）、这个站点在 Jackett 中的 ID（例如 Blutopia 是 `blutopia-api`，站点要先在 Jackett 中添加好）、是否启用。只有勾选的站点参与查重（以后的发种清单也是）；没填 Jackett ID 的站点不查重，结果中写明。配置文件写 `[sites]` 下的 `list = [{ id = "blutopia", name = "Blutopia", kind = "unit3d", jackett = "blutopia-api" }]`；旧版本的 `jackett.dupe_indexers` 会自动当作站点。
+- 在设置页面的“站点”一节管理要发种的站点：名称、类型（UNIT3D 标准接口、BeyondHD、PTP；BHD 也是 UNIT3D 改的，但接口和字段不同，单独算一类）、这个站点在 Jackett 中的 ID（例如 Blutopia 是 `blutopia-api`，站点要先在 Jackett 中添加好）、是否启用。只有勾选的站点参与查重和发种清单；没填 Jackett ID 的站点不查重，结果中写明。配置文件写 `[sites]` 下的 `list = [{ id = "blutopia", name = "Blutopia", kind = "unit3d", jackett = "blutopia-api" }]`；旧版本的 `jackett.dupe_indexers` 会自动当作站点。
 - 查重按站点分开显示。三个地方可以查：
   - **下载前**：资源候选列表中，IMDb 对上了的候选有“查重”按钮，看站点上是不是已经有同格式、同制式的盘，再决定要不要下载（候选的大小是整个种子的，多半含 nfo 等附加文件，只能“接近”）；
   - **处理完成后**：任务结果中自动列出；
@@ -184,6 +184,22 @@ films_only = true        # 只要影视类
 - 只看 DVD 原盘：Blu-ray、Remux、WEB-DL、压制和单个视频文件都不算。站点上的 DVD 标题按 Upload-Assistant 的写法（`Come and See AKA Idi i smotri 1985 PAL 2xDVD9 DD 5.1`）识别格式和制式。
 - 只列出来，不判断是否重复：能不能发、能不能替换请按站点规则判断。同一站点同一部片的结果缓存一小时，不会反复请求。
 - 已用 Blutopia（Jackett 的 `blutopia-api`）实测；PTP、BHD 的标题写法还没实测，可以先添加，结果不对时请反馈。
+
+## 发种清单（按站点，手动发种）
+
+处理完一张盘（截图任务完成）后，结果页按每个启用的站点给一份发种清单，照着在站点的上传页面手动填写；whatdvd 不会自动上传。
+
+- **能不能发**：按查重结果和处理时的提示给出“可以发 / 发之前请确认 / 不建议发”和原因。站点上有大小完全相同的盘时不建议发；有大小只差一点的、或同格式同制式的 DVD、查重出错、没有 IMDb 编号、处理时有警告时请先确认。
+- **表单字段**：每项都有复制按钮。目前适配 UNIT3D 标准接口的站点（Blutopia 等）：
+  - 名称同站上已有 DVD 和 Upload-Assistant 的写法：`Come and See AKA Idi i smotri 1985 PAL 2xDVD9 DD 5.1`（和 BHD 标题不同：没有 MPEG-2，DD 和声道之间有空格）；
+  - 分类 Movie，类型 Full Disc（UNIT3D 不区分 DVD5、DVD9），分辨率 PAL 为 576i、NTSC 为 480i；
+  - IMDb、TMDB 编号（片名来自 IMDb 数据集时没有 TMDB 编号，按片名去 themoviedb.org 查，或让站点按 IMDb 自动匹配）。
+- **MediaInfo**：MediaInfo 栏填 IFO 的；VOB 的放在发布说明里（同 Upload-Assistant）。
+- **发布说明**：每张盘一个 VOB MediaInfo 的折叠块，再接截图缩略图（点开是 Pixhost 原图）。
+- **种子**：UNIT3D 站点会改写上传的种子（加上站点标记），上传后要从站点下载种子再做种。
+- PTP、BHD 暂未适配，清单中写明。
+
+**站点的 announce 地址**（可选）：在设置页面的站点一行填写，含 passkey，按机密处理：保存后不再发回浏览器，只显示“已设置”，留空保存不修改，可以清除。填了之后做种时 Tracker 可以直接选“某站点的 announce”，由服务端填进种子；任务记录里只存站点名，不含 passkey。
 
 ## Docker
 

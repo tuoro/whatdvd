@@ -247,3 +247,26 @@ def folder_reflects_title(folder: str, titles: Sequence[str]) -> bool:
             ):
                 return True
     return False
+
+
+def unit3d_title(
+    *,
+    title: str,
+    original_title: str = "",
+    original_language: str = "",
+    year: int | None,
+    standard: str | None,
+    kind: str,
+    audio: str | None,
+    region: str = "",
+    edition: str = "",
+) -> str:
+    """UNIT3D 站点（Blutopia 等）的 DVD 标题，同 Upload-Assistant 和站上已有的写法：
+    "Come and See AKA Idi i smotri 1985 PAL 2xDVD9 DD 5.1"。和 BHD 不同：没有 MPEG-2，DD 和声道之间有空格。"""
+    parts = [title]
+    if needs_aka(title, original_title, original_language):
+        parts += ["AKA", original_title]
+    parts += [str(year)] if year else []
+    unit3d_audio = re.sub(r"^DD(?=\d)", "DD ", audio) if audio else ""
+    parts += [edition.strip(), region.strip(), standard or "", kind, unit3d_audio]
+    return " ".join(p for p in parts if p)

@@ -167,7 +167,7 @@ def test_torrent_job_and_download(authed: TestClient, media: Path, tmp_path: Pat
     assert response.status_code == 201
     job = wait_job(authed, response.json()["id"])
     assert job["status"] == "done" and job["ok"] is True
-    assert job["params"] == {"announces": ["https://t.example/a"], "piece_length": 22, "seed_name": ""}
+    assert job["params"] == {"announces": ["https://t.example/a"], "piece_length": 22, "seed_name": "", "site": ""}
     assert job["result"]["torrent_file"] == "Movie.A.torrent"
     assert any("种子：Movie.A.torrent" in e["message"] for e in job["events"])
     assert (tmp_path / "out" / "Movie.A" / "Movie.A.torrent").is_file()
@@ -668,6 +668,47 @@ def test_site_names_from_run_result(tmp_path: Path) -> None:
     assert names == {"bhd": "Come and See AKA Иди и смотри 1985 RUS PAL 2xDVD9 MPEG-2 DD5.1", "audio": "DD5.1",
                      "imdb_id": "tt0091251", "tmdb_url": None, "kind": "2xDVD9", "standard": "PAL"}
     assert _site_names(result, {}) is None
+
+
+def test_site_announce_is_secret(tmp_path: Path, media: Path) -> None:
+    """站点的 announce 含 passkey：设置页面只返回是否已设置，不提交时保持原样；做种时在服务端填进去。"""
+    from whatdvd.web.config import load_config
+
+    config_file = tmp_path / "config.toml"
+    config_file.write_text(
+        f'token = "{TOKEN}"\nroots = ["{media}"]\noutput_dir = "{tmp_path}/out"\n'
+        f'database = "{tmp_path}/state.db"\nsettings_file = "{tmp_path}/settings.json"\n',
+        encoding="utf-8",
+    )
+    runner = FakeRunner(fake_mktorrent, available=["mktorrent"])
+    secret = "https://blutopia.example/announce/passkey123"
+    app = create_app(load_config(config_file), runner=runner, background=False)
+    with TestClient(app, headers={"Authorization": f"Bearer {TOKEN}"}) as client:
+        site = {"id": "blu", "name": "Blutopia", "kind": "unit3d", "jackett": "blutopia-api", "enabled": True}
+        data = client.put("/api/settings", json={"sites": {"list": [{**site, "announce": secret}]}}).json()
+        assert data["values"]["sites"] == [{**site, "announce_set": True}]
+        assert "passkey123" not in client.get("/api/settings").text
+        assert client.get("/api/config").json()["tracker_sites"] == [{"id": "blu", "name": "Blutopia"}]
+        # 浏览器提交时不带 announce：保留原来的
+        client.put("/api/settings", json={"sites": {"list": [{**site, "name": "BLU"}]}})
+        assert client.get("/api/settings").json()["values"]["sites"][0]["announce_set"] is True
+        assert client.put("/api/settings", json={"sites": {"list": [{**site, "announce": "ftp://x"}]}}).status_code == 400
+
+        response = client.post("/api/jobs", json={"kind": "torrent", "path": str(media / "Movie A"), "announces": ["https://other/a"],
+                                                  "piece_length": 22, "site": "blu"})
+        job = wait_job(client, response.json()["id"])
+        assert job["status"] == "done", job["error"]
+        assert job["params"]["site"] == "blu" and job["params"]["announces"] == []
+        assert "passkey123" not in str(job)
+        mktorrent = next(call for call in runner.calls if call[0] == "mktorrent")
+        assert mktorrent[mktorrent.index("-a") + 1] == secret and "https://other/a" not in mktorrent
+
+        # announce 为 "" 时清空；之后不能再按这个站点做种
+        client.put("/api/settings", json={"sites": {"list": [{**site, "announce": ""}]}})
+        assert client.get("/api/settings").json()["values"]["sites"][0]["announce_set"] is False
+        assert client.get("/api/config").json()["tracker_sites"] == []
+        response = client.post("/api/jobs", json={"kind": "torrent", "path": str(media / "Movie A"), "piece_length": 22, "site": "blu"})
+        assert response.status_code == 400 and "announce" in response.json()["detail"]
 
 
 # ---------- 设置页面 ----------

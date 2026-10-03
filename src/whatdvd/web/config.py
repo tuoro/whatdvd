@@ -66,7 +66,11 @@ class JackettConfig:
     """查重的站点：Jackett 中的站点 ID（例如 "blutopia-api"），片名确定后按 IMDb 编号查这些站点上已有的 DVD。"""
 
 
-SITE_KINDS = {"unit3d": "UNIT3D（Blutopia、Aither 等）", "ptp": "PassThePopcorn", "bhd": "BeyondHD"}
+SITE_KINDS = {
+    "unit3d": "UNIT3D 标准接口（Blutopia、Aither 等）",
+    "bhd": "BeyondHD（UNIT3D 改版，接口不同）",
+    "ptp": "PassThePopcorn",
+}
 
 
 @dataclass(frozen=True)
@@ -81,6 +85,8 @@ class SiteConfig:
     jackett: str = ""
     """Jackett 中这个站点的 ID（例如 "blutopia-api"），用来查重；留空不查重。"""
     enabled: bool = True
+    announce: str = ""
+    """做种用的 announce 地址（含 passkey，机密：不发给浏览器）。"""
 
 
 @dataclass(frozen=True)
@@ -416,8 +422,11 @@ def _sites_config(flat: dict[tuple[str, str], Any]) -> tuple[SiteConfig, ...]:
         enabled = item.get("enabled", True)
         if not isinstance(enabled, bool):
             raise ConfigError(f"站点“{site_id}”的 enabled 必须是 true 或 false")
+        announce = str(item.get("announce", "")).strip()
+        if announce and not re.fullmatch(r"(?:https?|udp)://\S+", announce):
+            raise ConfigError(f"站点“{site_id}”的 announce 地址必须以 http://、https:// 或 udp:// 开头")
         sites.append(SiteConfig(id=site_id, name=str(item.get("name") or site_id).strip(), kind=kind,
-                                jackett=jackett, enabled=enabled))
+                                jackett=jackett, enabled=enabled, announce=announce))
     return tuple(sites)
 
 

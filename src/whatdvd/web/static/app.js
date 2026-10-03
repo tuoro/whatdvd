@@ -366,9 +366,10 @@ function readOptions() {
   const count = Number($("opt-count")?.value || state.opts.count);
   const upload = $("opt-upload") ? $("opt-upload").checked : state.opts.upload;
   const tracker = $("opt-tracker") ? $("opt-tracker").value : state.opts.tracker;
+  const site = $("opt-site") ? $("opt-site").value : state.opts.site || "";
   const piece = Number($("opt-piece")?.value || state.opts.piece);
   const seedName = $("opt-seedname") ? $("opt-seedname").value.trim() : "";
-  state.opts = { count, upload, tracker, piece, seedName };
+  state.opts = { count, upload, tracker, site, piece, seedName };
   return state.opts;
 }
 
@@ -384,7 +385,9 @@ function jobBodies(kind, path, single) {
     run.region = chosen.region;
     run.edition = chosen.edition;
   }
-  const torrent = { kind: "torrent", path, announces: opts.tracker.split(/\s+/).filter(Boolean), piece_length: opts.piece, seed_name };
+  const torrent = opts.site
+    ? { kind: "torrent", path, announces: [], site: opts.site, piece_length: opts.piece, seed_name }
+    : { kind: "torrent", path, announces: opts.tracker.split(/\s+/).filter(Boolean), piece_length: opts.piece, seed_name };
   return kind === "both" ? [run, torrent] : kind === "run" ? [run] : [torrent];
 }
 
@@ -445,11 +448,25 @@ function optionsRow() {
   return h("div", { class: "options" },
     h("label", {}, "截图", h("input", { id: "opt-count", type: "number", min: 1, max: 100, value: o.count }), h("span", { class: "hint" }, "张/盘")),
     h("label", { class: "switch" }, h("input", { id: "opt-upload", type: "checkbox", checked: o.upload }), h("span", { class: "track" }), "上传 Pixhost 并生成发布说明"),
-    h("label", {}, "Tracker", h("input", { id: "opt-tracker", type: "text", value: o.tracker, placeholder: "可留空，多个用空格分隔", spellcheck: "false" })),
+    trackerOption(o),
     h("label", {}, "分块", h("select", { id: "opt-piece" }, pieces)),
     state.config.seed_dir ? h("label", { class: "wide", title: `用硬链接放到发种目录 ${state.config.seed_dir.path}，原始下载不动` },
       "发种名称", h("input", { id: "opt-seedname", type: "text", value: "", placeholder: "留空用原名；例如 IMDb 片名和年份", spellcheck: "false" }),
       h("span", { class: "hint" }, "最外层文件夹名")) : null);
+}
+
+// Tracker：手填，或用设置里站点的 announce（含 passkey，只在服务端，这里只显示站点名）
+function trackerOption(o) {
+  const sites = state.config.tracker_sites || [];
+  const input = h("input", { id: "opt-tracker", type: "text", value: o.tracker, placeholder: "可留空，多个用空格分隔", spellcheck: "false" });
+  if (!sites.length) return h("label", {}, "Tracker", input);
+  const valid = sites.some((s) => s.id === o.site);
+  const select = h("select", { id: "opt-site" }, h("option", { value: "" }, "手填"),
+    sites.map((s) => h("option", { value: s.id, selected: valid && s.id === o.site }, `${s.name} 的 announce`)));
+  const sync = () => { input.hidden = Boolean(select.value); };
+  select.addEventListener("change", sync);
+  sync();
+  return h("label", {}, "Tracker", select, input);
 }
 
 // ---------- 查片名（TMDB）----------
@@ -822,9 +839,11 @@ function renderResult(job) {
 
   if (job.kind === "torrent") {
     const n = job.params.announces.length;
+    const site = job.params.site ? (state.config.tracker_sites || []).find((s) => s.id === job.params.site) : null;
+    const tracker = job.params.site ? `${site ? site.name : job.params.site} 的 announce` : n ? `${n} 个 Tracker` : "未填写 Tracker";
     nodes.push(h("div", { class: "file" }, icon("peers"),
       h("div", { class: "t" }, h("b", {}, result.torrent_file),
-        h("span", {}, `private · 分块 ${pieceLabel(job.params.piece_length)} · ${n ? `${n} 个 Tracker` : "未填写 Tracker"}`)),
+        h("span", {}, `private · 分块 ${pieceLabel(job.params.piece_length)} · ${tracker}`)),
       h("a", { class: "btn amber", href: fileUrl(job, result.torrent_file), download: result.torrent_file }, icon("down"), "下载种子")));
     if (result.seed_path) nodes.push(seedRow(job, result));
     const extra = result.extra_files || [];
@@ -855,6 +874,7 @@ function renderResult(job) {
     if (!n.audio) nodes.push(notice("warn", "MediaInfo 中没有读到音轨，BHD 标题缺少音轨部分，请手动补上。"));
   }
   if (result.dupes) nodes.push(dupesPanel(result.dupes, result.names));
+  for (const kit of result.kits || []) nodes.push(kitPanel(kit));
   if (result.seed_path && state.config.seed_dir && result.seed_path.startsWith(`${state.config.seed_dir.path}/`)) {
     nodes.push(h("p", { class: "seed-row" }, "发种目录：", h("code", { class: "path" }, result.seed_path)));
   }
@@ -1099,7 +1119,7 @@ function renderSettings(data) {
 }
 
 // 设置页面的站点列表：启用、名称、类型、Jackett 中的 ID
-const SITE_KINDS = [["unit3d", "UNIT3D（Blutopia、Aither 等）"], ["ptp", "PassThePopcorn"], ["bhd", "BeyondHD"]];
+const SITE_KINDS = [["unit3d", "UNIT3D 标准接口（Blutopia、Aither 等）"], ["bhd", "BeyondHD（UNIT3D 改版，接口不同）"], ["ptp", "PassThePopcorn"]];
 const SITE_PRESETS = [
   { id: "blutopia", name: "Blutopia", kind: "unit3d", jackett: "blutopia-api" },
   { id: "ptp", name: "PassThePopcorn", kind: "ptp", jackett: "" },
@@ -1119,9 +1139,17 @@ function sitesEditor(initial) {
       kind.addEventListener("change", () => { site.kind = kind.value; });
       const jackett = h("input", { type: "text", value: site.jackett, placeholder: "Jackett 中的 ID，例如 blutopia-api", list: "jackett-indexers", spellcheck: "false" });
       jackett.addEventListener("input", () => { site.jackett = jackett.value.trim(); });
+      // announce 含 passkey：服务端不发回来，只告诉是否已设置；不改时不提交这一项，保持原样
+      const announce = h("input", { type: "password", value: site.announce || "", autocomplete: "off", spellcheck: "false",
+        placeholder: site.announce_set ? "announce 已设置，留空不修改" : "announce 地址（含 passkey，做种用，可不填）" });
+      announce.addEventListener("input", () => {
+        if (announce.value.trim()) site.announce = announce.value.trim(); else delete site.announce;
+      });
+      const clear = site.announce_set ? h("button", { type: "button", class: "btn small glass" }, "清除 announce") : null;
+      clear?.addEventListener("click", () => { site.announce = ""; site.announce_set = false; render(); });
       const remove = h("button", { type: "button", class: "btn small glass" }, "删除");
       remove.addEventListener("click", () => { sites.splice(index, 1); render(); });
-      return h("div", { class: "site-row" }, h("label", { class: "check" }, enabled, "启用"), name, kind, jackett, remove);
+      return h("div", { class: "site-row" }, h("label", { class: "check" }, enabled, "启用"), name, kind, jackett, announce, clear, remove);
     });
     const preset = h("select", {}, SITE_PRESETS.map((p, i) => h("option", { value: String(i) }, p.name)));
     const add = h("button", { type: "button", class: "btn small glass" }, "添加站点");
@@ -1136,7 +1164,12 @@ function sitesEditor(initial) {
       h("div", { class: "site-add" }, preset, add));
   };
   render();
-  return { node: box, value: () => sites.map(({ id, name, kind, jackett, enabled }) => ({ id, name: name || id, kind, jackett, enabled })) };
+  return {
+    node: box,
+    value: () => sites.map(({ id, name, kind, jackett, enabled, announce }) => ({
+      id, name: name || id, kind, jackett, enabled, ...(announce !== undefined ? { announce } : {}),
+    })),
+  };
 }
 
 // 查重：站点上已有的 DVD 原盘（格式和制式都相同的排在前面并标出）
@@ -1156,6 +1189,31 @@ function dupesPanel(sites, names) {
   });
   return h("section", { class: "dupes-panel" }, h("h3", {}, "查重", ours ? h("span", { class: "hint" }, `　这张盘：${ours}`) : null),
     ...blocks, h("p", { class: "hint" }, "只列出站点上已有的 DVD 原盘，是否算重复、能不能替换请按站点规则判断。大小按 DVD 文件（VIDEO_TS 或 ISO）比较，改名不影响大小；站点上的种子多带了 nfo、封面时会差一点。"));
+}
+
+// 发种清单：每个启用的站点一份，手动发种时照着填
+const KIT_LEVELS = { ok: ["good", "可以发"], check: ["warn", "发之前请确认"], no: ["bad", "不建议发"] };
+function kitPanel(kit) {
+  const title = h("h3", {}, `发种清单 · ${kit.name}`);
+  if (!kit.supported) return h("section", { class: "kit-panel" }, title, h("p", { class: "hint" }, "这类站点暂未适配，之后再做。"));
+  const [cls, text] = KIT_LEVELS[kit.verdict.level] || KIT_LEVELS.check;
+  const fields = h("div", { class: "kit-fields" }, kit.fields.map((f) => h("div", { class: "kit-field" },
+    h("span", { class: "k" }, f.label),
+    f.value ? h("code", {}, f.value) : h("span", { class: "hint" }, "（需手动填写）"),
+    f.value ? copyButton("复制", async () => f.value) : h("span", {}),
+    f.hint ? h("span", { class: "hint" }, f.hint) : null)));
+  const block = (label, value, hint) => h("section", { class: "code" },
+    h("header", {}, label, h("span", { class: "sp" }), hint ? h("span", { class: "fmt" }, hint) : null, copyButton("复制", async () => value, "amber")),
+    h("pre", {}, value));
+  return h("section", { class: "kit-panel" }, title,
+    h("p", {}, h("span", { class: `chip ${cls}` }, text)),
+    kit.verdict.reasons.length ? h("ul", { class: "kit-reasons" }, kit.verdict.reasons.map((r) => h("li", {}, r))) : null,
+    fields,
+    block("MediaInfo", kit.mediainfo, "IFO"),
+    h("p", { class: "hint" }, kit.mediainfo_hint),
+    kit.description ? block("发布说明", kit.description, "BBCode") : notice("warn", "没有发布说明：截图没有上传成功或这次没有上传图床。"),
+    h("p", { class: "hint" }, kit.torrent_hint,
+      kit.announce_set ? "" : " 这个站点还没有在设置里填 announce 地址，做种时需要手填 Tracker。"));
 }
 
 // IMDb 数据集：状态和“下载 / 更新”按钮，更新时轮询进度

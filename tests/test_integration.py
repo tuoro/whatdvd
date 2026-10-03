@@ -199,14 +199,15 @@ def test_web_run(movie: Path, tmp_path: Path) -> None:
     from fastapi.testclient import TestClient
 
     from whatdvd.web.app import create_app
-    from whatdvd.web.config import ServerConfig
+    from whatdvd.web.config import ServerConfig, SiteConfig
 
     FakePixhost.uploaded = []
     config = ServerConfig(roots=(movie.parent.resolve(),), output_dir=tmp_path / "out", token="t",
-                          database=tmp_path / "db" / "whatdvd.db")
+                          database=tmp_path / "db" / "whatdvd.db", sites=(SiteConfig("blu", "Blutopia", "unit3d", "blutopia-api"),))
     app = create_app(config, host_factory=lambda: FakePixhost("pixhost.to"))
     with TestClient(app, headers={"Authorization": "Bearer t"}) as client:
-        body = {"kind": "run", "path": str(movie / "Disc 1"), "count": 3, "upload": True}
+        body = {"kind": "run", "path": str(movie / "Disc 1"), "count": 3, "upload": True,
+                "title": {"title": "Film", "year": 2001, "imdb_id": "tt0000001"}}
         job_id = client.post("/api/jobs", json=body).json()["id"]
         for _ in range(600):
             job = client.get(f"/api/jobs/{job_id}").json()
@@ -222,6 +223,14 @@ def test_web_run(movie: Path, tmp_path: Path) -> None:
         assert disc["screenshots"][0]["url"] == "https://img1.pixhost.to/images/1/Disc.1.VTS_02_1.VOB.scr1.png"
         assert result["post"].startswith("[b]Disc 1[/b]")
         assert result["post_file"] == "Disc.1.post.txt"
+
+        # 发种清单：没配 Jackett 查不了重，要先确认；MediaInfo 栏填 IFO 的，截图链接原图
+        kit = result["kits"][0]
+        assert kit["site"] == "blu" and kit["supported"] is True and kit["verdict"]["level"] == "check"
+        assert kit["fields"][0]["value"].startswith("Film 2001 PAL DVD")
+        assert ".IFO" in kit["mediainfo"].splitlines()[1]
+        assert kit["description"].startswith("[center][spoiler=VTS_02_1.VOB][code]General")
+        assert "[url=page][img=350]https://img1.pixhost.to/images/1/Disc.1.VTS_02_1.VOB.scr1.png[/img][/url]" in kit["description"]
 
         image = client.get(f"/api/jobs/{job_id}/files/Disc.1.VTS_02_1.VOB.scr1.png")
         assert image.status_code == 200 and image.headers["content-type"] == "image/png"
