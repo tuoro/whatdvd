@@ -10,7 +10,7 @@ import secrets
 import sqlite3
 import threading
 import time
-from dataclasses import replace
+from dataclasses import asdict, replace
 from collections.abc import AsyncIterator, Awaitable, Callable
 from importlib.resources import files
 from pathlib import Path
@@ -29,6 +29,7 @@ from ..post import DEFAULT_TEMPLATE
 from ..runner import Runner, SubprocessRunner
 from ..sources import find_sources, is_iso
 from ..checks import describe_extra_files, find_extra_files
+from ..ifo_info import SampleLog, read_vmg
 from ..imdb_dataset import Cancelled, DatasetError, ImdbDataset, Progress, build
 from ..indexer import IndexerError, Jackett
 from ..qbit import QBittorrent, QbitError
@@ -270,6 +271,10 @@ def _serialize_run(result: RunResult) -> dict[str, Any]:
         if disc.analysis is not None:  # 长片放在一张 DVD5 上：可能压缩过（说明性提醒）
             note = long_dvd5_note(disc.analysis.disc.media_type, disc.analysis.disc.title_duration)
             item["notes"] = [note] if note else []
+            vmg = read_vmg(disc.analysis.disc.video_ts)  # 只记录，攒数据看改制盘有没有可辨认的标记
+            item["vmg"] = asdict(vmg) if vmg is not None else None
+            seconds = disc.analysis.disc.title_duration
+            item["title_minutes"] = round(seconds / 60) if seconds else None
         discs.append(item)
 
     post_file = post_text = None
@@ -891,6 +896,21 @@ def create_app(
     def imdb_dataset() -> ImdbDataset:
         return ImdbDataset(cfg().database.with_name("imdb.db"))
 
+    # ---------- IFO 统计（处理过的盘的 VIDEO_TS.IFO 头部，可导出 CSV） ----------
+
+    def ifo_samples() -> SampleLog:
+        return SampleLog(cfg().database.with_name("ifo_samples.jsonl"))
+
+    @app.get("/api/ifo-samples", dependencies=auth)
+    async def ifo_sample_count() -> dict[str, Any]:
+        return {"count": len(await asyncio.to_thread(ifo_samples().rows))}
+
+    @app.get("/api/ifo-samples.csv", dependencies=auth)
+    async def ifo_sample_csv() -> Response:
+        text = await asyncio.to_thread(ifo_samples().csv)
+        return Response(text, media_type="text/csv; charset=utf-8",
+                        headers={"Content-Disposition": 'attachment; filename="whatdvd-ifo.csv"'})
+
     @app.get("/api/imdb", dependencies=auth)
     async def imdb_status() -> dict[str, Any]:
         dataset = imdb_dataset()
@@ -987,11 +1007,22 @@ def create_app(
         result = run(runner, path, options, reporter, host_factory)
         names = _site_names(result, job.params)
         serialized = _serialize_run(result)
+        record = watcher.store.by_local_path(str(job.path)) if watcher is not None else None
         for disc in serialized["discs"]:
+            label = disc.get("name") or disc["label"]
             for warning in disc.get("warnings", []):
-                reporter.error(f"[{disc.get('name') or disc['label']}] {warning}")
+                reporter.error(f"[{label}] {warning}")
             for note in disc.get("notes", []):
-                reporter.info(f"[{disc.get('name') or disc['label']}] {note}")
+                reporter.info(f"[{label}] {note}")
+            if vmg := disc.get("vmg"):
+                reporter.info(f"[{label}] VIDEO_TS.IFO 提供者标识：{vmg['provider'] or '（空）'}，区码 {vmg['regions']}")
+                ifo_samples().append({
+                    **vmg, "disc": label, "source_title": record.title if record else None,
+                    "details_url": record.details_url if record else None, "media_type": disc.get("media_type"),
+                    "total_bytes": disc.get("total_bytes"),
+                    "title_minutes": disc.get("title_minutes"),
+                    "warnings": disc.get("warnings", []) + disc.get("notes", []),
+                })
         if names:
             reporter.info(f"BHD 标题：{names['bhd']}")
         return {**serialized, "seed_path": str(path), "names": names}

@@ -202,7 +202,8 @@ def test_web_run(movie: Path, tmp_path: Path) -> None:
     from whatdvd.web.config import ServerConfig
 
     FakePixhost.uploaded = []
-    config = ServerConfig(roots=(movie.parent.resolve(),), output_dir=tmp_path / "out", token="t")
+    config = ServerConfig(roots=(movie.parent.resolve(),), output_dir=tmp_path / "out", token="t",
+                          database=tmp_path / "db" / "whatdvd.db")
     app = create_app(config, host_factory=lambda: FakePixhost("pixhost.to"))
     with TestClient(app, headers={"Authorization": "Bearer t"}) as client:
         body = {"kind": "run", "path": str(movie / "Disc 1"), "count": 3, "upload": True}
@@ -227,3 +228,11 @@ def test_web_run(movie: Path, tmp_path: Path) -> None:
         report = client.get(f"/api/jobs/{job_id}/files/{disc['mediainfo_file']}")
         assert report.headers["content-type"].startswith("text/plain")
         assert "Complete name" in report.text
+
+        # dvdauthor 生成的盘：VIDEO_TS.IFO 头部只记录，可以导出 CSV
+        assert disc["vmg"]["version"] == "1.1" and disc["vmg"]["bup_identical"] is True
+        assert client.get("/api/ifo-samples").json() == {"count": 1}
+        exported = client.get("/api/ifo-samples.csv")
+        assert exported.headers["content-type"].startswith("text/csv")
+        assert "attachment" in exported.headers["content-disposition"]
+        assert exported.text.splitlines()[1].split(",")[1] == "Disc 1"

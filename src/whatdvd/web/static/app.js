@@ -881,6 +881,8 @@ function renderResult(job) {
           h("dt", {}, "PAR"), h("dd", {}, disc.par),
           h("dt", {}, "VOB"), h("dd", {}, h("code", {}, disc.vob), ` · ${duration(disc.duration)}`),
           h("dt", {}, "IFO"), h("dd", {}, h("code", {}, disc.ifo || "无")),
+          disc.vmg ? h("dt", {}, "IFO 标识") : null,
+          disc.vmg ? h("dd", { title: "VIDEO_TS.IFO 中的提供者标识和区码，只记录，用来攒数据" }, h("code", {}, disc.vmg.provider || "（空）"), ` · 区码 ${disc.vmg.regions}`) : null,
           h("dt", {}, "来源"), h("dd", { title: disc.source }, h("code", {}, shortPath(disc.source))))));
     }
     nodes.push(section);
@@ -1074,7 +1076,7 @@ function renderSettings(data) {
 
   setMain(
     hero({ eyebrow: "whatdvd", title: "设置", compact: true, meta: [h("span", {}, "保存后立即生效，不用重启")] }),
-    h("div", { class: "content" }, error, form, imdbSection(), fixed));
+    h("div", { class: "content" }, error, form, imdbSection(), ifoSection(), fixed));
 }
 
 // IMDb 数据集：状态和“下载 / 更新”按钮，更新时轮询进度
@@ -1116,6 +1118,18 @@ function imdbSection() {
   return h("section", { class: "form-section" }, h("h2", {}, "IMDb 数据集"),
     h("p", { class: "form-desc" }, "IMDb 官方数据集（datasets.imdbws.com，个人非商业使用），用来按 IMDb 编号取片名：PTP 要求文件夹名和 IMDb 一致。下载约 740 MB，边下载边导入，不保存压缩包；导入后本地占用约几百 MB，需要几分钟。IMDb 每天更新，想用新片时点“更新”。"),
     status, h("div", { class: "actions" }, button));
+}
+
+// IFO 统计：处理过的盘的 VIDEO_TS.IFO 头部，一键导出 CSV
+function ifoSection() {
+  const status = h("p", {}, "读取中…");
+  const link = h("a", { class: "btn glass", href: "/api/ifo-samples.csv", download: "whatdvd-ifo.csv" }, icon("down"), "导出 CSV");
+  api("/api/ifo-samples").then((data) => {
+    status.textContent = data.count ? `已记录 ${data.count} 张盘。` : "还没有记录。处理过的盘会自动记录在这里。";
+  }).catch((error) => { if (!(error instanceof AuthError)) status.textContent = error.message; });
+  return h("section", { class: "form-section" }, h("h2", {}, "IFO 统计"),
+    h("p", { class: "form-desc" }, "每处理一张盘，记录 VIDEO_TS.IFO 中的提供者标识、区码、标题集数量，以及种子标题、发布页和处理时的提示，用来判断重新制作过的盘有没有可辨认的标记。只记录，不影响处理。CSV 可以用 Excel 打开。"),
+    status, h("div", { class: "actions" }, link));
 }
 
 function secretValue(ctl, key) {
