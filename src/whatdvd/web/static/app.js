@@ -820,6 +820,9 @@ function renderResult(job) {
     return nodes;
   }
 
+  for (const disc of result.discs) {
+    for (const warning of disc.warnings || []) nodes.push(notice("warn", `${disc.name || disc.label}：${warning}`));
+  }
   const shots = result.discs.flatMap((d) => d.screenshots || []);
   nodes.push(h("p", { class: "summary" },
     h("span", {}, h("b", {}, result.discs.length), " 张盘"),

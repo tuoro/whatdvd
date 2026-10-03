@@ -23,6 +23,7 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
+from ..compliance import added_dub_warning
 from ..dvd import DVD5_MAX_BYTES, ScanError
 from ..post import DEFAULT_TEMPLATE
 from ..runner import Runner, SubprocessRunner
@@ -261,6 +262,9 @@ def _serialize_run(result: RunResult) -> dict[str, Any]:
                 for shot in disc.output.shots
             ]
             item["mediainfo_file"] = disc.output.mediainfo.name
+            if disc.output.mediainfo.is_file():  # 从 MediaInfo 看是否可能改制过（只提示）
+                warning = added_dub_warning(disc.output.mediainfo.read_text(encoding="utf-8"))
+                item["warnings"] = [warning] if warning else []
             names += [shot.path.name for shot in disc.output.shots if shot.ok]
             names.append(disc.output.mediainfo.name)
         discs.append(item)
@@ -979,9 +983,13 @@ def create_app(
         )
         result = run(runner, path, options, reporter, host_factory)
         names = _site_names(result, job.params)
+        serialized = _serialize_run(result)
+        for disc in serialized["discs"]:
+            for warning in disc.get("warnings", []):
+                reporter.error(f"[{disc.get('name') or disc['label']}] {warning}")
         if names:
             reporter.info(f"BHD 标题：{names['bhd']}")
-        return {**_serialize_run(result), "seed_path": str(path), "names": names}
+        return {**serialized, "seed_path": str(path), "names": names}
 
     def torrent_worker(job: Job, reporter: JobReporter) -> dict[str, Any]:
         check_tools(runner, ["mktorrent"])
