@@ -1342,6 +1342,13 @@ function renderReleases(group, data) {
     title: "日常搜索只读最新的一页。全面搜索按“关键词 年份”逐年搜索（rutor 直连还会翻完每一页），可以找到更早发布的资源，需要几分钟。" },
   bf.running ? `全面搜索中 ${Math.round((bf.done / Math.max(bf.total, 1)) * 100)}%` : "按年份全面搜索");
   backfill.addEventListener("click", () => releaseRequest(backfill, "/api/releases/backfill", (r) => `开始全面搜索，共 ${r.total} 次查询`));
+  const rebuild = h("button", { type: "button", class: "btn glass", disabled: !searchable || s.searching,
+    title: "清空“候选”，按现在的过滤规则（只要影视类等）全面搜索一遍。旧版本存下的候选没有记分类，改了过滤规则后用它重新筛选。已忽略、进行中、已完成的不动。" },
+  "重建候选列表");
+  rebuild.addEventListener("click", () => {
+    if (!confirm(`清空“候选”中的 ${data.counts.new || 0} 个资源，按现在的过滤规则全面搜索一遍？已忽略、进行中、已完成的不受影响，全面搜索需要几分钟。`)) return;
+    releaseRequest(rebuild, "/api/releases/rebuild", (r) => `已清空 ${r.removed} 个候选，开始全面搜索，共 ${r.total} 次查询`);
+  });
   const sync = h("button", { type: "button", class: "btn glass", disabled: !s.qbit }, icon("refresh"), "检查下载");
   sync.addEventListener("click", () => releaseRequest(sync, "/api/releases/sync", () => "已检查 qBittorrent"));
 
@@ -1360,7 +1367,7 @@ function renderReleases(group, data) {
     : notice("", data.counts[group] ? "没有符合筛选条件的资源。" : RELEASE_EMPTY[group]);
 
   setMain(
-    hero({ eyebrow: "资源", title: "DVD 原盘", compact: true, meta, children: [h("div", { class: "actions" }, search, backfill, sync)] }),
+    hero({ eyebrow: "资源", title: "DVD 原盘", compact: true, meta, children: [h("div", { class: "actions" }, search, backfill, rebuild, sync)] }),
     h("div", { class: "content" }, h("div", {}, tabs), ...problems, sourceInfo, releaseFilterBar(group, data), list, releasePager(group, data)));
 }
 

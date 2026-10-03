@@ -42,6 +42,10 @@ class Record:
     progress: float = 0.0
     local_path: str | None = None
     remote_path: str | None = None
+    indexer_id: str = ""
+    """Jackett 中的站点 id（例如 "kinozal-magnet"），按站点自己的分类过滤时用。"""
+    categories: list[int] = field(default_factory=list)
+    """搜索结果中的分类（Torznab 标准分类和站点自己的分类）：改了“只要影视类”的规则后可以重新过滤，不用重新搜索。"""
     """下载完成时 qB 报告的路径（换算前）：改了 path_map 后“重新处理”按它重新换算。"""
     job_id: str | None = None
     post_file: str | None = None
@@ -136,6 +140,15 @@ class Store:
         """下载完成后在本地的路径对应的资源（用它的种子标题猜片名）。"""
         found = self._query(f"SELECT {', '.join(_COLUMNS)} FROM records WHERE local_path = ?", [json.dumps(path)])
         return found[0] if found else None
+
+    def delete(self, statuses: Iterable[Status]) -> int:
+        """删除这些状态的记录，返回删除数。"""
+        wanted = [json.dumps(status) for status in statuses]
+        if not wanted:
+            return 0
+        marks = ", ".join("?" for _ in wanted)
+        with self._lock:
+            return self._db.execute(f"DELETE FROM records WHERE status IN ({marks})", wanted).rowcount
 
     def list(self, statuses: Iterable[Status] = STATUSES) -> list[Record]:
         wanted = [json.dumps(status) for status in statuses]

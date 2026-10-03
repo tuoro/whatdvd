@@ -10,6 +10,7 @@ import html
 import re
 import time
 import xml.etree.ElementTree as ET
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from email.utils import parsedate_to_datetime
 from urllib.parse import quote
@@ -70,12 +71,17 @@ SITE_NON_FILM = {
 def is_film(release: Release) -> bool:
     """影视类：电影（2000–2999）或电视（5000–5999，体育 5060 除外），去掉站点自己标为演唱会、体育等的。
     不区分分类的站点全部保留。"""
-    if release.indexer_id in UNCATEGORIZED_INDEXERS:
+    return film_categories(release.indexer_id, release.categories)
+
+
+def film_categories(indexer_id: str, categories: Sequence[int]) -> bool:
+    """同 is_film，用保存下来的站点 id 和分类判断。"""
+    if indexer_id in UNCATEGORIZED_INDEXERS:
         return True
     for site, excluded in SITE_NON_FILM.items():  # Jackett 中的 id："kinozal"、"kinozal-magnet"
-        if release.indexer_id.startswith(site) and excluded.intersection(release.categories):
+        if indexer_id.startswith(site) and excluded.intersection(categories):
             return False
-    return any(2000 <= c < 3000 or (5000 <= c < 6000 and c != TV_SPORT) for c in release.categories)
+    return any(2000 <= c < 3000 or (5000 <= c < 6000 and c != TV_SPORT) for c in categories)
 
 
 # Jackett 的 "Add RUSSIAN to end of all titles"（kinozal 默认开着）在标题末尾加的标记，给 Sonarr / Radarr 用

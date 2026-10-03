@@ -31,7 +31,7 @@ from ..sources import find_sources, is_iso
 from ..checks import describe_extra_files, find_extra_files
 from ..ifo_info import SampleLog, read_vmg
 from ..imdb_dataset import Cancelled, DatasetError, ImdbDataset, Progress, build
-from ..indexer import IndexerError, Jackett
+from ..indexer import IndexerError, Jackett, film_categories
 from ..qbit import QBittorrent, QbitError
 from ..resolution import ASPECT_MODES
 from ..naming import clean_title
@@ -659,6 +659,9 @@ def create_app(
         current = get_watcher()
         counts = {name: len(current.store.list(statuses)) for name, statuses in RELEASE_GROUPS.items()}
         records = current.store.list(RELEASE_GROUPS[group])
+        jk = cfg().jackett
+        if group == "new" and jk is not None and jk.films_only:  # 保存了分类的按现在的“只要影视类”规则重新过滤
+            records = [r for r in records if not r.categories or film_categories(r.indexer_id, r.categories)]
         words = q.casefold().split()
         if words:
             records = [r for r in records if all(word in r.title.casefold() for word in words)]
@@ -707,6 +710,15 @@ def create_app(
         except WatcherError as error:
             raise watcher_error(error) from None
         return {"total": total}
+
+    @app.post("/api/releases/rebuild", dependencies=auth, status_code=202)
+    async def rebuild_releases() -> dict[str, Any]:
+        """清空“候选”，按现在的过滤规则全面搜索一遍（已忽略、进行中、已完成的不动）。"""
+        try:
+            removed, total = get_watcher().rebuild()
+        except WatcherError as error:
+            raise watcher_error(error) from None
+        return {"removed": removed, "total": total}
 
     @app.post("/api/releases/sync", dependencies=auth, status_code=204)
     async def sync_releases() -> None:

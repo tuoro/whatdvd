@@ -873,8 +873,17 @@ def test_release_filters_and_paging(tmp_path: Path, media: Path) -> None:
         assert ids("imdb=true") == ["d"]
         assert client.get("/api/releases?imdb=true").json()["imdb_dataset"] is True
 
-        response = client.post("/api/releases/backfill")
-        assert response.status_code == 202 and response.json()["total"] > 100
+        # 保存了分类的按现在的“只要影视类”规则过滤：kinozal 把演唱会也归在电影下
+        store.save(Record(id="k", title="Andre Rieu - Live 2003 БП DVD-9", source="Kinozal (M)", kind="DVD9",
+                          indexer_id="kinozal-magnet", categories=[2000, 100048]))
+        assert "k" not in ids()
+
+        # 重建候选列表：清空“候选”，再全面搜索（已忽略的不动）
+        store.save(Record(id="ign", title="Ignored (2001) DVD9", source="RuTor", kind="DVD9", status="ignored"))
+        response = client.post("/api/releases/rebuild")
+        assert response.status_code == 202 and response.json()["removed"] == 6 and response.json()["total"] > 100
+        assert ids() == [] and ids("group=ignored") == ["ign"]
+        assert client.post("/api/releases/backfill").status_code == 409  # 全面搜索已经开始
 
 
 def test_settings_enable_rutor(settings_client: tuple[TestClient, Path]) -> None:

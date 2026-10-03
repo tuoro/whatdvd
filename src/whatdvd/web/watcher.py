@@ -190,6 +190,8 @@ class Watcher:
                     discs=verdict.discs,
                     warnings=verdict.notes,
                     labels=verdict.labels,
+                    indexer_id=release.indexer_id,
+                    categories=list(release.categories),
                 )
             )
             added += 1
@@ -205,6 +207,8 @@ class Watcher:
             "seeders": release.seeders,
             "download_url": release.download_url or record.download_url,
             "magnet": release.magnet or record.magnet,
+            "indexer_id": release.indexer_id or record.indexer_id,
+            "categories": list(release.categories) or record.categories,
         }
         if verdict.accepted:
             changes.update(kind=verdict.kind, discs=verdict.discs, warnings=verdict.notes, labels=verdict.labels)
@@ -295,6 +299,16 @@ class Watcher:
             if errors and len([e for e in errors if not e.startswith("连续")]) >= len(steps):
                 raise WatcherError(self.state.search_error or "搜索失败")
             return added
+
+    def rebuild(self) -> tuple[int, int]:
+        """重建候选列表：删掉“候选”中的全部记录（已忽略、进行中、已完成的不动），再按现在的过滤规则全面搜索一遍。
+        旧版本存下的候选没有分类，改了“只要影视类”的规则后只能这样重新过滤。返回（删除数，搜索次数）。"""
+        if self._search_lock.locked() or self.state.backfill_running:
+            raise WatcherError("正在搜索，请等这次搜索完成")
+        if not self._backfill_steps():
+            raise WatcherError("没有配置 Jackett 或 rutor 直连")
+        removed = self.store.delete(["new"])
+        return removed, self.start_backfill()
 
     def start_backfill(self) -> int:
         """在后台全面搜索，返回搜索次数。同一时间只能有一个搜索。"""
