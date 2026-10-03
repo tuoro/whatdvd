@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import errno
 import os
+import re
 import shutil
 import tempfile
 from pathlib import Path
@@ -64,14 +65,41 @@ def _files(root: Path) -> list[Path]:
     return sorted(found)
 
 
-def _same_tree(source: Path, target: Path) -> bool:
-    """target 是否就是 source 的硬链接副本（文件一一对应且是同一份数据）。"""
+_DVD_FILE = re.compile(r"(?:VIDEO_TS|VTS_\d\d_\d)\.(?:IFO|BUP|VOB)", re.IGNORECASE)
+
+
+def flat_dvd_dirs(root: Path) -> list[Path]:
+    """DVD 文件平铺、没有放在 VIDEO_TS 子目录里的目录（相对 root）：有 VIDEO_TS.IFO、自己不叫 VIDEO_TS。"""
+    if root.is_file():
+        return []
+    return sorted(
+        directory.relative_to(root) for directory in [root, *(p for p in root.rglob("*") if p.is_dir())]
+        if directory.name.upper() != "VIDEO_TS"
+        and any(f.is_file() and f.name.upper() == "VIDEO_TS.IFO" for f in directory.iterdir())
+    )
+
+
+def _layout(source: Path) -> dict[Path, Path]:
+    """源文件 → 发种目录中的位置（相对路径）。平铺的 DVD 文件放进同一层的 VIDEO_TS 目录（PTP 要求 VIDEO_TS
+    结构；原始下载不动，qB 照常做种），其他文件位置不变。"""
+    flat = set(flat_dvd_dirs(source))
+    layout = {}
+    for relative in _files(source):
+        if relative.parent in flat and _DVD_FILE.fullmatch(relative.name):
+            layout[relative] = relative.parent / "VIDEO_TS" / relative.name
+        else:
+            layout[relative] = relative
+    return layout
+
+
+def _same_tree(source: Path, target: Path, *, flat: bool = False) -> bool:
+    """target 是否就是 source 的硬链接副本（文件一一对应且是同一份数据）。flat：按原样（不整理 VIDEO_TS）比较。"""
     if source.is_file() != target.is_file():
         return False
-    files = _files(source)
-    if files != _files(target):
+    layout = {f: f for f in _files(source)} if flat else _layout(source)
+    if sorted(layout.values()) != _files(target):
         return False
-    return all(os.path.samefile(source / f, target / f) for f in files)
+    return all(os.path.samefile(source / s, target / t) for s, t in layout.items())
 
 
 def link_tree(source: Path, seed_dir: Path, name: str | None = None) -> tuple[Path, bool]:
@@ -90,7 +118,11 @@ def link_tree(source: Path, seed_dir: Path, name: str | None = None) -> tuple[Pa
     if target.exists() or target.is_symlink():
         if _same_tree(source, target):
             return target, False
-        raise LinkError(f"发种目录中已有 {target.name}，但和 {source} 不是同一份数据。请换一个发种名称，或先删除它。")
+        if flat_dvd_dirs(source) and _same_tree(source, target, flat=True):
+            # 旧版本按原样建的平铺副本（全是这个源的硬链接，删掉不丢数据；平铺的盘当时处理不了，不会已经在做种）
+            shutil.rmtree(target)
+        else:
+            raise LinkError(f"发种目录中已有 {target.name}，但和 {source} 不是同一份数据。请换一个发种名称，或先删除它。")
 
     staging = Path(tempfile.mkdtemp(prefix=".whatdvd-link-", dir=seed_dir))
     try:
@@ -98,9 +130,9 @@ def link_tree(source: Path, seed_dir: Path, name: str | None = None) -> tuple[Pa
         if source.is_file():
             os.link(source, built)
         else:
-            for relative in _files(source):
-                (built / relative).parent.mkdir(parents=True, exist_ok=True)
-                os.link(source / relative, built / relative)
+            for relative, placed in _layout(source).items():
+                (built / placed).parent.mkdir(parents=True, exist_ok=True)
+                os.link(source / relative, built / placed)
             built.mkdir(exist_ok=True)  # 空目录
         try:
             built.rename(target)

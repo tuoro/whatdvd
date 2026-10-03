@@ -9,6 +9,7 @@ from pathlib import Path
 from .dvd import Disc, ScanError, scan_disc
 from .iso import open_iso
 from .runner import Runner
+from .seedlink import flat_dvd_dirs
 
 
 def is_iso(path: Path) -> bool:
@@ -34,6 +35,8 @@ def find_sources(path: Path) -> list[Path]:
         for p in path.rglob("*")
         if (p.is_dir() and p.name.upper() == "VIDEO_TS") or (p.is_file() and is_iso(p))
     ]
+    # DVD 文件平铺、没有 VIDEO_TS 子目录的（有的种子这样打包）：这个目录本身就是一张盘
+    found += [path / relative for relative in flat_dvd_dirs(path)]
     if not found:
         raise ScanError(f"没有找到 VIDEO_TS 目录或 ISO 文件：{path}")
     return sorted(found, key=str)

@@ -37,3 +37,11 @@ def test_open_disc_folder_uses_input_parent(tmp_path: Path, fake_runner: type) -
     with open_disc(fake_runner(), video_ts, tmp_path / "Movie") as disc:
         assert disc.mediainfo_root == tmp_path
         assert disc.name == "Disc 1"
+
+
+def test_find_sources_flat_disc(tmp_path: Path) -> None:
+    """DVD 文件平铺在盘目录里：这个目录本身就是一张盘，盘名用它自己的名字。"""
+    flat = make_file(tmp_path / "wolfblood" / "VIDEO_TS.IFO", 10).parent
+    make_file(flat / "VTS_01_1.VOB", 10)
+    assert find_sources(flat) == [flat]
+    assert find_sources(tmp_path) == [flat]

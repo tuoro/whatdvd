@@ -213,7 +213,8 @@ def scan_disc(runner: Runner, video_ts: Path, mediainfo_root: Path) -> Disc:
     except ScanError as error:
         raise ScanError(f"{error}（{video_ts}）") from None
     return Disc(
-        name=video_ts.parent.name,
+        # 平铺的盘（DVD 文件直接放在盘目录里）用盘目录自己的名字
+        name=video_ts.parent.name if video_ts.name.upper() == "VIDEO_TS" else video_ts.name,
         video_ts=video_ts,
         vob=selection.vob,
         ifo=selection.ifo,

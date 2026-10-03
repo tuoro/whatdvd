@@ -102,3 +102,41 @@ def test_separate_mounts_of_same_disk(tmp_path: Path, monkeypatch: pytest.Monkey
     real = os.path.ismount
     monkeypatch.setattr("whatdvd.seedlink.os.path.ismount", lambda p: Path(p) in mounts or real(p))
     assert not same_filesystem(tmp_path / "media", tmp_path / "seed")
+
+
+def test_link_tree_puts_flat_dvd_files_into_video_ts(tmp_path: Path) -> None:
+    """DVD 文件平铺在盘目录里（没有 VIDEO_TS 子目录）：发种目录中放进 VIDEO_TS，原始下载不动。"""
+    disc = tmp_path / "downloads" / "wolfblood"
+    disc.mkdir(parents=True)
+    for name in ("VIDEO_TS.IFO", "VIDEO_TS.BUP", "VTS_01_0.IFO", "VTS_01_1.VOB"):
+        (disc / name).write_bytes(name.encode())
+    (disc / "info.nfo").write_text("nfo")
+    target, created = link_tree(disc, tmp_path / "seed", "Volchya.krov.1995.DVD5")
+    assert created
+    assert sorted(p.name for p in (target / "VIDEO_TS").iterdir()) == ["VIDEO_TS.BUP", "VIDEO_TS.IFO", "VTS_01_0.IFO",
+                                                                      "VTS_01_1.VOB"]
+    assert os.path.samefile(target / "VIDEO_TS" / "VTS_01_1.VOB", disc / "VTS_01_1.VOB")
+    assert (target / "info.nfo").exists()  # 其他文件位置不变
+    assert sorted(p.name for p in disc.iterdir())[0] == "VIDEO_TS.BUP"  # 原始下载还是平铺的
+    assert link_tree(disc, tmp_path / "seed", "Volchya.krov.1995.DVD5") == (target, False)  # 再处理时复用
+
+
+def test_link_tree_replaces_old_flat_copy(tmp_path: Path) -> None:
+    """旧版本按原样建的平铺硬链接副本：确认是同一份数据后换成 VIDEO_TS 结构。"""
+    disc = tmp_path / "downloads" / "wolfblood"
+    disc.mkdir(parents=True)
+    for name in ("VIDEO_TS.IFO", "VTS_01_1.VOB"):
+        (disc / name).write_bytes(name.encode())
+    old = tmp_path / "seed" / "wolfblood"
+    old.mkdir(parents=True)
+    for name in ("VIDEO_TS.IFO", "VTS_01_1.VOB"):
+        os.link(disc / name, old / name)
+    target, created = link_tree(disc, tmp_path / "seed")
+    assert created and target == old and (target / "VIDEO_TS" / "VTS_01_1.VOB").exists()
+    assert not (target / "VTS_01_1.VOB").exists() and (disc / "VTS_01_1.VOB").read_bytes() == b"VTS_01_1.VOB"
+
+    other = tmp_path / "seed2" / "wolfblood"  # 同名但不是同一份数据：不动，报错
+    other.mkdir(parents=True)
+    (other / "VTS_01_1.VOB").write_bytes(b"x")
+    with pytest.raises(LinkError, match="不是同一份数据"):
+        link_tree(disc, tmp_path / "seed2")

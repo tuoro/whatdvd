@@ -37,7 +37,7 @@ from ..resolution import ASPECT_MODES
 from ..naming import clean_title
 from ..release_names import audio_from_mediainfo, bhd_title, disc_kind, folder_reflects_title, guess_query, ptp_name
 from ..rutor import Rutor
-from ..seedlink import LinkError, check_name, link_tree, same_filesystem, target_name
+from ..seedlink import LinkError, check_name, flat_dvd_dirs, link_tree, same_filesystem, target_name
 from ..store import Status, Store
 from ..tmdb import Match, Tmdb, TmdbError
 from ..torrent import PIECE_LENGTH_RANGE, make_torrent
@@ -1034,6 +1034,9 @@ def create_app(
             reporter.info(note)
         seed_dir = cfg().seed_dir
         if seed_dir is None:
+            if job.path.is_dir() and flat_dvd_dirs(job.path):
+                reporter.error("这张盘的 DVD 文件直接放在盘目录里，没有 VIDEO_TS 子目录。PTP 要求 VIDEO_TS 结构："
+                               "设置发种目录后，会在发种目录里用硬链接整理成 VIDEO_TS 结构（原始下载不动）")
             return job.path
         name = job.params.get("seed_name") or None
         try:
