@@ -198,8 +198,18 @@ _LOOKALIKES = str.maketrans("хХРрАаОоСсДдЛл", "xXPpAaOoCcDdLl")
 
 _DISCS = re.compile(r"(?<![\d.])(?:(\d{1,2})\s*[x×]?\s*)?DVD-?\s?([59])(?!\d)", re.IGNORECASE)
 
+# 删掉了菜单或花絮的盘（PTP、BHD 只收未改动的原盘）："без меню"、"без доп. материалов"、"только фильм"、"Movie only"。
+# 不含 "Доп. материалы: нет" 这类字段：那是原盘本来就没有花絮
+_STRIPPED = re.compile(
+    r"без\s*(?:меню|доп(?![а-яё])|допов|доп\.|дополнительн|бонус)|только\s+фильм|"
+    r"\b(?:no|without|w/o)[\s._-]+(?:menus?|extras)\b|\b(?:menus?|extras)[\s._-]+(?:removed|stripped)\b|\bmenu-?less\b|"
+    r"(?:\bmain[\s._-]+|[(\[|]\s*)(?:movie|film|feature)[\s._-]+only\b",  # 不匹配 "Only Lovers Left Alive" 这类片名
+    re.IGNORECASE,
+)
+
 _EXCLUDE = [
     (re.compile(r"custom|кастом", re.IGNORECASE), "Custom（改制过的盘）"),
+    (_STRIPPED, "删掉了菜单或花絮的盘，不是完整的原盘"),
     (re.compile(r"сжат", re.IGNORECASE), "压缩过的盘（сжатый）"),
     (re.compile(r"реставр", re.IGNORECASE), "修复版（Реставрация），不是原盘"),
     # rutracker 写明来源的转制盘："Betacam SP > DVD5"、"VHS > DVD9"、"LD > DVD5"
@@ -289,6 +299,7 @@ _RELEASE_FIELD = re.compile(r"(Тип релиза|Качество видео|�
 _FIELD_END = re.compile(r"\s+[A-ZА-ЯЁ][\w() /-]{1,40}$")  # 值后面紧跟的下一个字段名
 _RELEASE_BAD = [
     (re.compile(r"custom|кастом", re.IGNORECASE), "Custom（改制过的盘）"),
+    (_STRIPPED, "删掉了菜单或花絮的盘"),
     (re.compile(r"сжат", re.IGNORECASE), "压缩过的盘（сжатый）"),
     (re.compile(r"реставр", re.IGNORECASE), "修复版（Реставрация）"),
     (re.compile(r"рип|rip\b|remux|ремукс|пересоб|rebuil", re.IGNORECASE), "重新压制或封装过的，不是 DVD 原盘"),
@@ -331,6 +342,65 @@ LOOSE_STREAMS = (".h264", ".264", ".avc", ".m2v", ".mpv", ".ac3", ".eac3", ".dts
 
 def loose_streams(files: list[str]) -> list[str]:
     return [f for f in files if f.lower().endswith(LOOSE_STREAMS)]
+
+
+_VTS_FILE = re.compile(r"VTS_(\d\d)_(\d)\.(VOB|IFO|BUP)", re.IGNORECASE)
+_VMG_FILE = re.compile(r"VIDEO_TS\.(VOB|IFO|BUP)", re.IGNORECASE)
+
+
+@dataclass(frozen=True)
+class Structure:
+    """按种子里的文件列表看盘的结构：refuse 为拒绝推送的原因，notes 为只提示的说明。"""
+
+    refuse: str | None = None
+    notes: tuple[str, ...] = ()
+
+
+def _gb(size: int) -> str:
+    return f"{size / 1e9:.2f} GB"
+
+
+def disc_structure(files: list[tuple[str, int]], title: str = "") -> Structure:
+    """files 为（相对路径，大小）。每个含 VIDEO_TS / VTS 文件的目录算一张盘：
+
+    - 拒绝：缺 VIDEO_TS.IFO（每张 DVD 都必须有）、标题集缺 IFO、标题 VOB 编号中间缺号（VTS_01_1、VTS_01_3），
+      一张盘的大小超过 DVD9 的容量；
+    - 提示：标着 DVD9、每张盘却都放得进 DVD5 的（可能压缩过或删掉了部分内容）。
+    ISO 只看大小。
+    """
+    discs: dict[str, tuple[str, dict[str, int]]] = {}  # 目录（不分大小写）→（原样的目录名，{文件名: 大小}）
+    for path, size in files:
+        parent, _, name = path.replace("\\", "/").rpartition("/")
+        if _VTS_FILE.fullmatch(name) or _VMG_FILE.fullmatch(name) or name.lower().endswith(".iso"):
+            key = path if name.lower().endswith(".iso") else parent
+            discs.setdefault(key.casefold(), (key, {}))[1][name.upper()] = size
+    sizes = []
+    for key, names in discs.values():
+        sizes.append(sum(names.values()))
+        if key.lower().endswith(".iso"):
+            continue
+        where = f"“{key}”" if key else "根目录"
+        if "VIDEO_TS.IFO" not in names:
+            return Structure(f"{where}里没有 VIDEO_TS.IFO（每张 DVD 都必须有）：盘不完整或改动过")
+        sets: dict[str, set[int]] = {}
+        for name in names:
+            if match := _VTS_FILE.fullmatch(name):
+                parts = sets.setdefault(match[1], set())
+                if match[3].upper() == "VOB" and match[2] != "0":
+                    parts.add(int(match[2]))
+        for number, parts in sorted(sets.items()):
+            if f"VTS_{number}_0.IFO" not in names:
+                return Structure(f"{where}里有标题集 {number} 的文件，却没有 VTS_{number}_0.IFO：盘不完整")
+            if parts and sorted(parts) != list(range(1, max(parts) + 1)):
+                missing = sorted(set(range(1, max(parts) + 1)) - parts)
+                return Structure(f"{where}里缺少 VTS_{number}_{missing[0]}.VOB：盘不完整")
+    if any(size > DVD9_MAX_BYTES for size in sizes):
+        return Structure(f"一张盘有 {_gb(max(sizes))}，超过 DVD9 的容量：不是原盘")
+    notes = []
+    claimed = {layer for _, layer in _DISCS.findall(title.translate(_LOOKALIKES))}
+    if sizes and claimed == {"9"} and all(size <= DVD5_MAX_BYTES for size in sizes):
+        notes.append(f"标题写的是 DVD9，盘却只有 {_gb(max(sizes))}，放得进 DVD5：可能压缩过或删掉了部分内容，请确认")
+    return Structure(notes=tuple(notes))
 
 
 def classify(title: str, size: int, seeders: int | None = None) -> Verdict:

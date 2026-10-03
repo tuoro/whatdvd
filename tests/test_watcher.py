@@ -29,8 +29,15 @@ def _torrent(name: str, files: list[str]) -> bytes:
     return b"d4:info" + info + b"e"
 
 
-TORRENT = _torrent("Film One", ["VIDEO_TS/VIDEO_TS.IFO", "VIDEO_TS/VTS_01_1.VOB"])
+DVD_FILES = ["VIDEO_TS/VIDEO_TS.IFO", "VIDEO_TS/VIDEO_TS.BUP", "VIDEO_TS/VTS_01_0.IFO", "VIDEO_TS/VTS_01_0.BUP",
+             "VIDEO_TS/VTS_01_1.VOB"]
+TORRENT = _torrent("Film One", DVD_FILES)
 TORRENT_HASH = torrent_info_hash(TORRENT)
+
+
+def _make_dvd(folder: Path) -> None:
+    for name in DVD_FILES:
+        make_file(folder / name, 1)
 
 
 def _item(guid: str, title: str, size: int, infohash: str = "") -> str:
@@ -209,7 +216,7 @@ def test_sync_progress_then_process_then_done(h: Harness, services: FakeServices
     record = h.watcher.store.get(record_id)
     assert record is not None and (record.status, record.progress) == ("downloading", 0.42)
 
-    make_file(downloads / "Film One" / "VIDEO_TS" / "VTS_01_1.VOB", 1)
+    _make_dvd(downloads / "Film One")
     services.torrent(TORRENT_HASH, "stalledUP", 1.0, "/downloads/Film One")
     h.run(h.watcher.sync)
     assert h.submitted == [downloads / "Film One"]  # 按 path_map 映射到本机路径
@@ -228,7 +235,7 @@ def test_sync_progress_then_process_then_done(h: Harness, services: FakeServices
 
 
 def test_failed_job_and_restart(h: Harness, services: FakeServices, downloads: Path) -> None:
-    make_file(downloads / "Film" / "VIDEO_TS" / "VTS_01_1.VOB", 1)
+    _make_dvd(downloads / "Film")
     services.torrent("c" * 40, "uploading", 1.0, "/downloads/Film")
     h.run(h.watcher.sync)  # 在 qB 中手动添加到分类的种子
     record = h.watcher.store.by_hash("c" * 40)
@@ -460,7 +467,7 @@ def test_schedule_shows_manual_only_interval(tmp_path: Path, downloads: Path, se
 def test_push_refused_when_torrent_folder_says_custom(h: Harness, services: FakeServices) -> None:
     """网页标题没写 Custom、种子文件夹名写了：拒绝推送，移到已忽略。"""
     record_id = _first(h)
-    custom = _torrent("Predator.(1987).(DVD9.CUSTOM.FS.NTSC.2xMVO)", ["VIDEO_TS/VTS_01_1.VOB"])
+    custom = _torrent("Predator.(1987).(DVD9.CUSTOM.FS.NTSC.2xMVO)", DVD_FILES)
     original = FakeServices.__call__
 
     def serve(self: FakeServices, request: httpx.Request) -> httpx.Response:
@@ -520,7 +527,7 @@ def test_unreadable_release_page_does_not_block(tmp_path: Path, downloads: Path)
 def test_loose_streams_warn_but_push(h: Harness, services: FakeServices) -> None:
     """原盘里混进零散的音视频文件：照样推送，资源上加提示（PTP：删掉再发）。"""
     record_id = _first(h)
-    with_streams = _torrent("Film One", ["VIDEO_TS/VTS_01_1.VOB", "Film.ac3", "Film.h264"])
+    with_streams = _torrent("Film One", [*DVD_FILES, "Film.ac3", "Film.h264"])
     original = FakeServices.__call__
 
     def serve(self: FakeServices, request: httpx.Request) -> httpx.Response:
@@ -534,4 +541,4 @@ def test_loose_streams_warn_but_push(h: Harness, services: FakeServices) -> None
     finally:
         FakeServices.__call__ = original  # type: ignore[method-assign]
     assert pushed.status == "sent"
-    assert pushed.warnings[0].startswith("种子里有 2 个零散的音视频文件（Film.ac3, Film.h264）")
+    assert any(w.startswith("种子里有 2 个零散的音视频文件（Film.ac3, Film.h264）") for w in pushed.warnings)

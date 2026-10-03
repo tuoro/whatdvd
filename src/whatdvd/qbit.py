@@ -213,18 +213,27 @@ def _bdecode(data: bytes, index: int) -> tuple[Any, int]:
     raise ValueError(f"无效的 bencode（位置 {index}）")
 
 
-def torrent_contents(data: bytes) -> tuple[str, list[str]]:
-    """种子里的名字（单文件为文件名，多文件为最外层文件夹名）和文件列表（相对路径）。"""
+def torrent_files(data: bytes) -> tuple[str, list[tuple[str, int]]]:
+    """种子里的名字（单文件为文件名，多文件为最外层文件夹名）和文件列表（相对路径，大小）。"""
     try:
         meta, _ = _bdecode(data, 0)
         info = meta[b"info"]
         name = info[b"name"].decode("utf-8", "replace")
         if b"files" not in info:
-            return name, [name]
-        files = ["/".join(part.decode("utf-8", "replace") for part in item[b"path"]) for item in info[b"files"]]
+            return name, [(name, int(info.get(b"length", 0)))]
+        files = [
+            ("/".join(part.decode("utf-8", "replace") for part in item[b"path"]), int(item.get(b"length", 0)))
+            for item in info[b"files"]
+        ]
     except (ValueError, IndexError, KeyError, TypeError, AttributeError) as error:
         raise QbitError(f"种子文件无效：{error}") from None
     return name, files
+
+
+def torrent_contents(data: bytes) -> tuple[str, list[str]]:
+    """种子里的名字和文件列表（相对路径）。"""
+    name, files = torrent_files(data)
+    return name, [path for path, _ in files]
 
 
 def torrent_info_hash(data: bytes) -> str:
