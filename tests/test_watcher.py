@@ -10,7 +10,7 @@ import httpx
 import pytest
 
 from conftest import make_file
-from test_qbit import TORRENT
+from test_qbit import TORRENT as TEXT_TORRENT
 from whatdvd.indexer import Jackett
 from whatdvd.qbit import QBittorrent, torrent_info_hash
 from whatdvd.store import Store
@@ -18,6 +18,18 @@ from whatdvd.web.config import JackettConfig, QbitConfig, ServerConfig
 from whatdvd.web.jobs import Job
 from whatdvd.web.watcher import Watcher, WatcherError
 
+def _torrent(name: str, files: list[str]) -> bytes:
+    """多文件种子（只有元数据）。"""
+    entries = b"".join(
+        b"d6:lengthi1e4:pathl" + b"".join(f"{len(p.encode())}:{p}".encode() for p in f.split("/")) + b"ee" for f in files
+    )
+    encoded = name.encode()
+    info = (b"d5:filesl" + entries + b"e4:name" + f"{len(encoded)}:".encode() + encoded
+            + b"12:piece lengthi262144e6:pieces20:" + bytes(range(20)) + b"7:privatei1ee")
+    return b"d4:info" + info + b"e"
+
+
+TORRENT = _torrent("Film One", ["VIDEO_TS/VIDEO_TS.IFO", "VIDEO_TS/VTS_01_1.VOB"])
 TORRENT_HASH = torrent_info_hash(TORRENT)
 
 
@@ -441,3 +453,37 @@ def test_schedule_shows_manual_only_interval(tmp_path: Path, downloads: Path, se
     h.run(tick)
     assert h.watcher.status()["schedule"] == {"Jackett": {"every": 0, "next": None}}
     assert h.watcher.status()["sources"] == {}  # 没有自动搜索
+
+
+def test_push_refused_when_torrent_folder_says_custom(h: Harness, services: FakeServices) -> None:
+    """网页标题没写 Custom、种子文件夹名写了：拒绝推送，移到已忽略。"""
+    record_id = _first(h)
+    custom = _torrent("Predator.(1987).(DVD9.CUSTOM.FS.NTSC.2xMVO)", ["VIDEO_TS/VTS_01_1.VOB"])
+    original = FakeServices.__call__
+
+    def serve(self: FakeServices, request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/dl/"):
+            return httpx.Response(200, content=custom)
+        return original(self, request)
+
+    FakeServices.__call__ = serve  # type: ignore[method-assign]
+    try:
+        with pytest.raises(WatcherError, match="拒绝推送：.*Custom"):
+            h.run(lambda: h.watcher.download(record_id))
+    finally:
+        FakeServices.__call__ = original  # type: ignore[method-assign]
+    record = h.watcher.store.get(record_id)
+    assert record is not None and record.status == "ignored" and "Custom" in (record.error or "")
+    assert record.warnings[0].startswith("种子文件夹名")
+    assert services.added == []  # 没有推送到 qB
+
+
+def test_completed_custom_folder_is_not_processed(h: Harness, services: FakeServices, downloads: Path) -> None:
+    """只有磁力链接或在 qB 中手动加的：下载完成后按文件夹名再查一次。"""
+    folder = downloads / "Hulk.(2003).(DVD9.Custom.FS.NTSC.DUB)"
+    make_file(folder / "VIDEO_TS" / "VTS_01_1.VOB", 1)
+    services.torrent("c" * 40, "stalledUP", 1.0, f"/downloads/{folder.name}", name=folder.name)
+    h.run(h.watcher.sync)
+    record = h.watcher.store.by_hash("c" * 40)
+    assert record is not None and record.status == "failed" and "不处理" in (record.error or "")
+    assert h.submitted == []

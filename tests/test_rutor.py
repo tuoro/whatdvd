@@ -66,6 +66,10 @@ def test_parse_search_empty_and_changed_layout() -> None:
         parse_search(broken, "https://rutor.info")
 
 
+# 单文件种子，文件是 ISO（元数据，不含内容）
+DVD_TORRENT = b"d4:infod6:lengthi1e4:name8:Film.isoee"
+
+
 class FakeRutor:
     def __init__(self, total: int, music: frozenset[int] = frozenset()) -> None:
         """music：属于音乐分类（2）的资源编号；其他非零分类没有结果。"""
@@ -76,7 +80,7 @@ class FakeRutor:
     def __call__(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request.url.raw_path.decode())
         if request.url.host == "d.rutor.info":
-            return httpx.Response(200, content=b"d4:infod4:name1:aee")
+            return httpx.Response(200, content=DVD_TORRENT)
         parts = request.url.path.split("/")  # /search/<页码>/<分类>/100/0/<关键词>
         number, category = int(parts[2]), int(parts[3])
         if category:
@@ -115,7 +119,7 @@ def test_delay_between_requests(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_fetch_torrent() -> None:
     client = Rutor(delay=0, transport=httpx.MockTransport(FakeRutor(total=0)))
-    assert client.fetch("https://d.rutor.info/download/1") == b"d4:infod4:name1:aee"
+    assert client.fetch("https://d.rutor.info/download/1") == DVD_TORRENT
     bad = Rutor(delay=0, transport=httpx.MockTransport(lambda r: httpx.Response(200, text="<html>")))
     with pytest.raises(IndexerError, match="下载种子失败"):
         bad.fetch("https://d.rutor.info/download/1")

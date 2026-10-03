@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import base64
 import hashlib
 import re
@@ -185,6 +187,44 @@ def _bencode_end(data: bytes, index: int) -> int:
         colon = data.index(b":", index)
         return colon + 1 + int(data[index:colon])
     raise ValueError(f"无效的 bencode（位置 {index}）")
+
+
+def _bdecode(data: bytes, index: int) -> tuple[Any, int]:
+    char = data[index : index + 1]
+    if char == b"i":
+        end = data.index(b"e", index)
+        return int(data[index + 1 : end]), end + 1
+    if char == b"l":
+        items, index = [], index + 1
+        while data[index : index + 1] != b"e":
+            item, index = _bdecode(data, index)
+            items.append(item)
+        return items, index + 1
+    if char == b"d":
+        mapping, index = {}, index + 1
+        while data[index : index + 1] != b"e":
+            key, index = _bdecode(data, index)
+            mapping[key], index = _bdecode(data, index)
+        return mapping, index + 1
+    if char.isdigit():
+        colon = data.index(b":", index)
+        end = colon + 1 + int(data[index:colon])
+        return data[colon + 1 : end], end
+    raise ValueError(f"无效的 bencode（位置 {index}）")
+
+
+def torrent_contents(data: bytes) -> tuple[str, list[str]]:
+    """种子里的名字（单文件为文件名，多文件为最外层文件夹名）和文件列表（相对路径）。"""
+    try:
+        meta, _ = _bdecode(data, 0)
+        info = meta[b"info"]
+        name = info[b"name"].decode("utf-8", "replace")
+        if b"files" not in info:
+            return name, [name]
+        files = ["/".join(part.decode("utf-8", "replace") for part in item[b"path"]) for item in info[b"files"]]
+    except (ValueError, IndexError, KeyError, TypeError, AttributeError) as error:
+        raise QbitError(f"种子文件无效：{error}") from None
+    return name, files
 
 
 def torrent_info_hash(data: bytes) -> str:

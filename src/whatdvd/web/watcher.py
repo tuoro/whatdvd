@@ -16,8 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from ..indexer import IndexerError, Jackett, Release, Verdict, classify
-from ..qbit import PathMap, QBittorrent, QbitError, magnet_info_hash, torrent_info_hash
+from ..indexer import IndexerError, Jackett, Release, Verdict, classify, inspect_contents
+from ..qbit import PathMap, QBittorrent, QbitError, magnet_info_hash, torrent_contents, torrent_info_hash
 from ..rutor import SOURCE as RUTOR_SOURCE
 from ..rutor import Rutor
 from ..store import Record, Status, Store
@@ -37,6 +37,18 @@ Step = tuple[str, Callable[[], Sequence[Release]]]
 
 MAX_CONSECUTIVE_FAILURES = 3
 """连续失败这么多次就停止（网站或 Jackett 不可用时，不再发出剩下的请求）。"""
+
+
+def _relative_files(path: Path, limit: int = 5000) -> list[str]:
+    if path.is_file():
+        return [path.name]
+    files = []
+    for item in path.rglob("*"):
+        if item.is_file():
+            files.append(item.relative_to(path).as_posix())
+            if len(files) >= limit:
+                break
+    return files
 
 
 def _first_page(rutor: Rutor, query: str) -> list[Release]:
@@ -322,6 +334,10 @@ class Watcher:
                 torrent, magnet = (fetched, None) if isinstance(fetched, bytes) else (None, fetched)
         if torrent is not None:
             info_hash = torrent_info_hash(torrent)
+            # 网页标题没写、种子里的文件夹名却写着 Custom 等标记的盘：拒绝推送，移到“已忽略”
+            if reason := inspect_contents(*torrent_contents(torrent)):
+                self.store.update(record.id, status="ignored", error=reason, warnings=[reason, *record.warnings])
+                raise WatcherError(f"拒绝推送：{reason}")
         elif magnet:
             info_hash = magnet_info_hash(magnet) or record.info_hash or ""
         else:
@@ -380,6 +396,11 @@ class Watcher:
 
     def _start(self, record: Record, local: Path) -> None:
         """local 为本机路径（已做过路径映射）。"""
+        # 只有磁力链接、推送前看不到种子内容的，以及在 qB 中手动加进分类的：按下载下来的文件夹再查一次
+        if local.exists() and (reason := inspect_contents(local.name, _relative_files(local))):
+            self.store.update(record.id, status="failed", progress=1.0, local_path=str(local),
+                              error=f"不处理：{reason}")
+            return
         resolved = self._allowed(local)
         if resolved is None:
             hint = "路径不存在" if not local.exists() else "不在允许的目录（roots）内"

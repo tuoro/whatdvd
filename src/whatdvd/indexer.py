@@ -267,6 +267,21 @@ def _looks_stripped(title: str) -> bool:
     return bool(re.search(r"(^|[\s\[(])/\s+/", title)) or len(letters) < 3
 
 
+_DISC_FILES = (".vob", ".ifo", ".bup", ".iso")
+
+
+def inspect_contents(name: str, files: list[str]) -> str | None:
+    """种子里的文件夹名和文件列表：网页标题没写、但文件夹名写着 Custom 等标记的盘（rutor 上常见，
+    例如标题 "Терминатор 2 … DVD9 | P, A"，文件夹 "Terminator.2.(1991).(DVD9.CUSTOM.FS…)"），或者根本没有
+    DVD 文件的种子。返回拒绝的原因；没问题时为 None。"""
+    for pattern, reason in _EXCLUDE:
+        if pattern.search(name):
+            return f"种子文件夹名“{name}”说明是{reason}"
+    if files and not any(f.lower().endswith(_DISC_FILES) for f in files):
+        return f"种子“{name}”里没有 VOB、IFO 或 ISO 文件，不是 DVD 原盘"
+    return None
+
+
 def classify(title: str, size: int, seeders: int | None = None) -> Verdict:
     for pattern, reason in _EXCLUDE:
         if pattern.search(title):

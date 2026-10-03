@@ -176,3 +176,14 @@ def test_path_map_to_remote() -> None:
     assert mapping.to_remote(Path("/media/qb/seed/Film")) == "/seed/Film"  # 最长前缀优先
     assert mapping.to_remote(Path("/media/qb/Film")) == "/downloads/Film"
     assert mapping.to_remote(Path("/other/Film")) == "/other/Film"
+
+
+def test_torrent_contents() -> None:
+    from whatdvd.qbit import torrent_contents
+
+    multi = (b"d4:infod5:filesld6:lengthi1e4:pathl8:VIDEO_TS12:VTS_01_1.VOBeee4:name8:Film One"
+             b"12:piece lengthi262144e6:pieces0:ee")
+    assert torrent_contents(multi) == ("Film One", ["VIDEO_TS/VTS_01_1.VOB"])
+    assert torrent_contents(TORRENT) == ("a.txt", ["a.txt"])
+    with pytest.raises(QbitError, match="种子文件无效"):
+        torrent_contents(b"d4:infoi1ee")

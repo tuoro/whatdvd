@@ -299,3 +299,34 @@ def test_classify_labels(title: str, labels: list[str]) -> None:
     verdict = classify(title, 1)
     assert verdict.labels == labels
     assert not any("正版" in n or "原声" in n or "原版" in n for n in verdict.notes)  # 正面标记不算提示
+
+
+DVD_FILES = ["VIDEO_TS/VIDEO_TS.IFO", "VIDEO_TS/VTS_01_1.VOB"]
+
+
+@pytest.mark.parametrize(
+    ("name", "files", "reason"),
+    [
+        # rutor 上标题没写 Custom、种子文件夹名写了的（2026 年 10 月实际抽查到的）
+        ("Terminator.2.Judgment.Day.(1991).(DVD9.CUSTOM.FS.2xMVO.AVO.Eng.Sub)", DVD_FILES, "Custom"),
+        ("Lethal.Weapon.(1987).(DVD9.Custom.NTSC.FS.2xDUB.MVO.3xAVO)", DVD_FILES, "Custom"),
+        ("Saving.Private.Ryan.1998.DVD9.(custom)", DVD_FILES, "Custom"),
+        ("Batman.&.Robin.(1997)(DVD5.Custom.NTSC.FS.DUB.Varus)", DVD_FILES, "Custom"),
+        ("Film.2005.DVD5.сжатый", DVD_FILES, "压缩"),
+        ("Film.2005.DVDRip", ["Film.avi"], "不是 DVD 原盘"),
+        ("Film 2005", ["Film.mkv", "Film.srt"], "没有 VOB、IFO 或 ISO"),
+        # 正常的
+        ("Juriev.den.2008.O.DVD_RUSSFILM", DVD_FILES, None),
+        ("2k2", DVD_FILES, None),
+        ("VIDEO_TS", ["VIDEO_TS.IFO", "VTS_01_1.VOB"], None),
+        ("Save and Protect (original version) [DVD9]", DVD_FILES, None),
+        ("RAPA_NUI-1994", DVD_FILES, None),
+        ("Film.iso", ["Film.iso"], None),
+        ("Жизнь как чудо", DVD_FILES, None),
+    ],
+)
+def test_inspect_contents(name: str, files: list[str], reason: str | None) -> None:
+    from whatdvd.indexer import inspect_contents
+
+    found = inspect_contents(name, files)
+    assert (found is None) if reason is None else (found is not None and reason in found)
