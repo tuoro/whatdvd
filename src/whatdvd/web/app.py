@@ -133,9 +133,9 @@ def settings_values(c: ServerConfig) -> dict[str, Any]:
             "queries": list(jk.queries) if jk else list(JackettConfig.queries),
             "interval": jk.interval if jk else 60,
             "films_only": jk.films_only if jk else True,
-            "dupe_indexers": list(jk.dupe_indexers) if jk else [],
         },
         "tmdb": {"api_key_set": bool(c.tmdb_api_key)},
+        "sites": [asdict(site) for site in c.sites],
     }
 
 
@@ -962,27 +962,49 @@ def create_app(
     dupe_cache: dict[tuple[str, str], tuple[float, list[Release]]] = {}
 
     def check_dupes(imdb_id: str, kind: str, standard: str | None, size: int | None = None) -> list[dict[str, Any]]:
-        """每个查重站点：{"site", "error", "items"}。同一站点同一部片的结果缓存一小时。"""
+        """每个启用的站点：{"site", "name", "kind", "error", "items"}；没有设置 Jackett 站点 ID 的不查，
+        error 中说明。同一站点同一部片的结果缓存一小时。"""
         jk = cfg().jackett
-        sites = []
-        for site in jk.dupe_indexers if jk is not None else ():
-            assert jk is not None
-            cached = dupe_cache.get((site, imdb_id))
-            error = None
+        results = []
+        for site in cfg().sites:
+            if not site.enabled:
+                continue
+            entry: dict[str, Any] = {"site": site.id, "name": site.name, "kind": site.kind, "error": None, "items": []}
+            results.append(entry)
+            if jk is None:
+                entry["error"] = "没有设置 Jackett，无法查重"
+                continue
+            if not site.jackett:
+                entry["error"] = "没有填写这个站点在 Jackett 中的 ID，不查重"
+                continue
+            cached = dupe_cache.get((site.jackett, imdb_id))
             if cached is not None and time.monotonic() - cached[0] < DUPE_CACHE_SECONDS:
                 releases = cached[1]
             else:
-                client = Jackett(jk.url, jk.api_key, indexer=site, delay=JACKETT_DELAY)
+                client = Jackett(jk.url, jk.api_key, indexer=site.jackett, delay=JACKETT_DELAY)
                 try:
                     releases = client.search_imdb(imdb_id)
-                    dupe_cache[(site, imdb_id)] = (time.monotonic(), releases)
+                    dupe_cache[(site.jackett, imdb_id)] = (time.monotonic(), releases)
                 except IndexerError as exc:
-                    releases, error = [], str(exc)
+                    entry["error"] = str(exc)
+                    continue
                 finally:
                     client.close()
-            items = [asdict(e) for e in existing_dvds(site, releases, kind, standard, size)]
-            sites.append({"site": site, "error": error, "items": items})
-        return sites
+            entry["items"] = [asdict(e) for e in existing_dvds(site.id, releases, kind, standard, size)]
+        return results
+
+    @app.get("/api/releases/{release_id}/dupes", dependencies=auth)
+    async def release_dupes(release_id: str) -> dict[str, Any]:
+        """下载前查重：按候选在 IMDb 数据集中的匹配查各站点，格式取候选标题里的（"2×DVD9" → "2xDVD9"），
+        制式写了才比较，大小用种子的总大小（多半含 nfo 等附加文件，只能“接近”）。"""
+        record = release_or_404(release_id)
+        match = await asyncio.to_thread(release_imdb, record.title)
+        if not match or not match["id"]:
+            raise HTTPException(400, "这个候选在 IMDb 数据集中没有对上的片，无法查重：下载后在来源页选好片名再查")
+        standard = m[1].upper() if (m := re.search(r"(?<![A-Za-z])(PAL|NTSC)(?![A-Za-z])", record.title, re.I)) else None
+        kind = (record.kind or "").replace("×", "x")
+        sites = await asyncio.to_thread(check_dupes, match["id"], kind, standard, record.size or None)
+        return {"imdb": match, "kind": kind, "standard": standard, "sites": sites}
 
     @app.get("/api/dupes", dependencies=auth)
     async def dupes_api(
@@ -1127,20 +1149,19 @@ def create_app(
         if names:
             reporter.info(f"BHD 标题：{names['bhd']}")
         dupes = None
-        jk = cfg().jackett
-        if names and names.get("imdb_id") and jk is not None and jk.dupe_indexers:
+        if names and names.get("imdb_id") and any(site.enabled for site in cfg().sites):
             size = sum(d.get("total_bytes") or 0 for d in serialized["discs"]) or None
             dupes = check_dupes(names["imdb_id"], names["kind"], names["standard"], size)
             for site in dupes:
                 if site["error"]:
-                    reporter.error(f"查重（{site['site']}）失败：{site['error']}")
+                    reporter.error(f"查重（{site['name']}）：{site['error']}")
                 for item in site["items"]:
                     mark = ("【大小完全相同，很可能就是这张盘】" if item["size_match"] == "exact"
                             else "【大小只差一点】" if item["size_match"] == "near"
                             else "【格式和制式相同】" if item["same"] else "")
-                    reporter.info(f"查重（{site['site']}）：{mark}{item['title']}")
+                    reporter.info(f"查重（{site['name']}）：{mark}{item['title']}")
                 if not site["error"] and not site["items"]:
-                    reporter.info(f"查重（{site['site']}）：没有这部片的 DVD 原盘")
+                    reporter.info(f"查重（{site['name']}）：没有这部片的 DVD 原盘")
         return {**serialized, "seed_path": str(path), "names": names, "dupes": dupes}
 
     def torrent_worker(job: Job, reporter: JobReporter) -> dict[str, Any]:

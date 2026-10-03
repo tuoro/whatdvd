@@ -174,12 +174,16 @@ films_only = true        # 只要影视类
 
 片名确定（有 IMDb 编号）后，按 IMDb 编号在站点上查这部片已有的 DVD 原盘，只读，不上传：
 
-- 在设置页面 Jackett 一节的“查重站点”填写 Jackett 中的站点 ID，多个用空格分隔，例如 `blutopia-api`（站点要先在 Jackett 中添加好）。配置文件写 `dupe_indexers = ["blutopia-api"]`。
-- 处理完成后，任务结果中列出每个站点已有的 DVD 原盘：标题（链接到站点上的种子页）、大小、做种数；格式（DVD5、DVD9、2xDVD9……）和制式（PAL、NTSC）都和这张盘相同的排在前面并标出。来源页选好片名后也可以点“查重”。
+- 在设置页面的“站点”一节管理要发种的站点：名称、类型（UNIT3D、PTP、BHD）、这个站点在 Jackett 中的 ID（例如 Blutopia 是 `blutopia-api`，站点要先在 Jackett 中添加好）、是否启用。只有勾选的站点参与查重（以后的发种清单也是）；没填 Jackett ID 的站点不查重，结果中写明。配置文件写 `[sites]` 下的 `list = [{ id = "blutopia", name = "Blutopia", kind = "unit3d", jackett = "blutopia-api" }]`；旧版本的 `jackett.dupe_indexers` 会自动当作站点。
+- 查重按站点分开显示。三个地方可以查：
+  - **下载前**：资源候选列表中，IMDb 对上了的候选有“查重”按钮，看站点上是不是已经有同格式、同制式的盘，再决定要不要下载（候选的大小是整个种子的，多半含 nfo 等附加文件，只能“接近”）；
+  - **处理完成后**：任务结果中自动列出；
+  - **来源页**：选好片名后点“查重”。
+- 每个站点列出已有的 DVD 原盘：标题（链接到站点上的种子页）、大小、做种数；格式（DVD5、DVD9、2xDVD9……）和制式（PAL、NTSC）都和这张盘相同的排在前面并标出。
 - 大小按 DVD 文件（VIDEO_TS 中的文件或 ISO）比较：和站点上的种子完全相同的标为“很可能就是这张盘”（改名、整理成 VIDEO_TS 结构都不影响大小，转种的盘会完全相同）；只差 50 MB 以内的标为“只差一点”，多半是一边多了 nfo、封面等附加文件，请点进去确认。思路来自 Upload-Assistant（它对 DVD 原盘只比名字和总大小，不比 DVD5/DVD9、PAL/NTSC）。
 - 只看 DVD 原盘：Blu-ray、Remux、WEB-DL、压制和单个视频文件都不算。站点上的 DVD 标题按 Upload-Assistant 的写法（`Come and See AKA Idi i smotri 1985 PAL 2xDVD9 DD 5.1`）识别格式和制式。
 - 只列出来，不判断是否重复：能不能发、能不能替换请按站点规则判断。同一站点同一部片的结果缓存一小时，不会反复请求。
-- 已适配 Blutopia（Jackett 的 `blutopia-api`）。
+- 已用 Blutopia（Jackett 的 `blutopia-api`）实测；PTP、BHD 的标题写法还没实测，可以先添加，结果不对时请反馈。
 
 ## Docker
 

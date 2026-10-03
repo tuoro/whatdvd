@@ -66,6 +66,23 @@ class JackettConfig:
     """查重的站点：Jackett 中的站点 ID（例如 "blutopia-api"），片名确定后按 IMDb 编号查这些站点上已有的 DVD。"""
 
 
+SITE_KINDS = {"unit3d": "UNIT3D（Blutopia、Aither 等）", "ptp": "PassThePopcorn", "bhd": "BeyondHD"}
+
+
+@dataclass(frozen=True)
+class SiteConfig:
+    """发种站点：查重、发种清单按站点进行，只有启用的参与。"""
+
+    id: str
+    """站点的标识（字母、数字、- 和 _），例如 "blutopia"。"""
+    name: str
+    kind: str
+    """站点类型（SITE_KINDS）：决定发种清单的格式。"""
+    jackett: str = ""
+    """Jackett 中这个站点的 ID（例如 "blutopia-api"），用来查重；留空不查重。"""
+    enabled: bool = True
+
+
 @dataclass(frozen=True)
 class RutorConfig:
     url: str = "https://rutor.info"
@@ -108,6 +125,8 @@ class ServerConfig:
     jackett: JackettConfig | None = None
     rutor: RutorConfig | None = None
     tmdb_api_key: str = ""
+    sites: tuple[SiteConfig, ...] = ()
+    """发种站点（设置页面“站点”一节）。"""
     """TMDB 的 API Key（v3）或读取令牌（v4），用来查片名；空为不使用。"""
     config_file: Path | None = None
     """读取的配置文件；没有时为 None。"""
@@ -162,6 +181,7 @@ _SCHEMA: dict[tuple[str, str], type | tuple[type, ...]] = {
     ("rutor", "interval"): int,
     ("rutor", "films_only"): bool,
     ("tmdb", "api_key"): str,
+    ("sites", "list"): list,
 }
 
 
@@ -174,7 +194,7 @@ EDITABLE: frozenset[tuple[str, str]] = frozenset(
         ("", "seed_dir"),
         ("", "auto_rename"),
         *((table, key) for table, key in _SCHEMA if table in ("screenshots", "pixhost", "torrent", "post")),
-        *((table, key) for table, key in _SCHEMA if table in ("qbittorrent", "jackett", "rutor", "tmdb")),
+        *((table, key) for table, key in _SCHEMA if table in ("qbittorrent", "jackett", "rutor", "tmdb", "sites")),
     }
 )
 SECRETS: frozenset[tuple[str, str]] = frozenset(
@@ -373,6 +393,34 @@ def _jackett_config(flat: dict[tuple[str, str], Any]) -> JackettConfig | None:
     )
 
 
+def _sites_config(flat: dict[tuple[str, str], Any]) -> tuple[SiteConfig, ...]:
+    items = flat.get(("sites", "list"))
+    if items is None:  # 旧版本的 jackett.dupe_indexers：每个 Jackett 站点 ID 当作一个 UNIT3D 站点
+        return tuple(SiteConfig(id=re.sub(r"[^\w-]", "-", i), name=i, kind="unit3d", jackett=i)
+                     for i in dict.fromkeys(i.strip() for i in flat.get(("jackett", "dupe_indexers"), []) if i.strip()))
+    sites: list[SiteConfig] = []
+    for item in items:
+        if not isinstance(item, dict):
+            raise ConfigError("sites.list 的每一项必须是表，例如 { id = \"blutopia\", name = \"Blutopia\", kind = \"unit3d\" }")
+        site_id = str(item.get("id", "")).strip()
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", site_id):
+            raise ConfigError(f"站点标识“{site_id}”只能用字母、数字、- 和 _")
+        if site_id in {s.id for s in sites}:
+            raise ConfigError(f"站点标识“{site_id}”重复")
+        kind = str(item.get("kind", "")).strip()
+        if kind not in SITE_KINDS:
+            raise ConfigError(f"站点“{site_id}”的类型必须是 {'、'.join(SITE_KINDS)} 之一")
+        jackett = str(item.get("jackett", "")).strip()
+        if not re.fullmatch(r"[\w.-]*", jackett):
+            raise ConfigError(f"站点“{site_id}”的 Jackett 站点 ID 不对：{jackett}")
+        enabled = item.get("enabled", True)
+        if not isinstance(enabled, bool):
+            raise ConfigError(f"站点“{site_id}”的 enabled 必须是 true 或 false")
+        sites.append(SiteConfig(id=site_id, name=str(item.get("name") or site_id).strip(), kind=kind,
+                                jackett=jackett, enabled=enabled))
+    return tuple(sites)
+
+
 def _rutor_config(flat: dict[tuple[str, str], Any]) -> RutorConfig | None:
     url = flat.get(("rutor", "url"), "").strip()
     if not url:
@@ -474,6 +522,7 @@ def load_config(
         jackett=_jackett_config(flat),
         rutor=_rutor_config(flat),
         tmdb_api_key=flat.get(("tmdb", "api_key"), "").strip() or os.environ.get(TMDB_KEY_ENV, "").strip(),
+        sites=_sites_config(flat),
         roots=tuple(resolved_roots),
         output_dir=_expand(flat.get(("", "output_dir"), str(DEFAULT_OUTPUT_DIR))).absolute(),
         token=token.token,

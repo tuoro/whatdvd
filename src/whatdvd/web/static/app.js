@@ -543,7 +543,7 @@ function titlePanel(path, info) {
       try {
         const r = await api(`/api/dupes?imdb=${encodeURIComponent(t.imdb_id)}&kind=${encodeURIComponent(info.disc_kind)}&size=${info.total_bytes || ""}`);
         dupeBox.replaceChildren(r.sites.length ? dupesPanel(r.sites, { kind: info.disc_kind })
-          : notice("", "还没有设置查重站点：在设置页面 Jackett 一节填写，例如 blutopia-api。"));
+          : notice("", "还没有启用的站点：在设置页面的“站点”一节添加，例如 Blutopia。"));
       } catch (error) {
         if (!(error instanceof AuthError)) dupeBox.replaceChildren(notice("bad", error.message));
       } finally {
@@ -1056,11 +1056,11 @@ function renderSettings(data) {
       row("站点", h("span", {}, input("jackett.indexer", v.jackett.indexer, { list: "jackett-indexers" }), indexerList), "all 为全部已配置的站点；点“测试连接”后可以从列表中选"),
       row("搜索关键词", input("jackett.queries", v.jackett.queries.join(" ")), "多个用空格分隔"),
       row("自动搜索", number("jackett.interval", v.jackett.interval, 0, 10080), "分钟一次；0 为只手动搜索"),
-      row("只要影视类", toggle("jackett.films_only", v.jackett.films_only, "只要分类 2000（电影）和 5000（电视剧、动画、纪录片），去掉音乐、培训、体育等；Jackett 的 rutor 不区分分类，无法过滤")),
-      row("查重站点", h("span", {}, input("jackett.dupe_indexers", v.jackett.dupe_indexers.join(" "), { list: "jackett-indexers", placeholder: "例如 blutopia-api，留空不查重" })),
-        "Jackett 中的站点 ID，多个用空格分隔。片名确定后按 IMDb 编号查这些站点上已有的 DVD 原盘，列在任务结果中（只读，不上传）")),
+      row("只要影视类", toggle("jackett.films_only", v.jackett.films_only, "只要分类 2000（电影）和 5000（电视剧、动画、纪录片），去掉音乐、培训、体育等；Jackett 的 rutor 不区分分类，无法过滤"))),
     section("TMDB", "填写 API Key 即启用：在来源页查片名，按 IMDb / TMDB 的英文名和原名给出 PTP 发种名称和 BHD 标题。API Key 在 themoviedb.org 的账号设置中免费申请，v3 API Key 和 v4 读取令牌都可以。",
-      row("API Key", h("span", { class: "inline" }, secret("tmdb.api_key", v.tmdb.api_key_set, "TMDB 的 API Key 或读取令牌"), tmTest), tmResult)));
+      row("API Key", h("span", { class: "inline" }, secret("tmdb.api_key", v.tmdb.api_key_set, "TMDB 的 API Key 或读取令牌"), tmTest), tmResult)),
+    section("站点", "要发种的站点。勾选的站点参与查重和发种清单，取消勾选就不参与。查重通过 Jackett 按 IMDb 编号查站点上已有的 DVD 原盘（只读，不上传），需要先在 Jackett 中添加这个站点，再填它在 Jackett 中的 ID。",
+      (ctl.sites = sitesEditor(v.sites)).node));
 
   const error = h("div", { class: "form-errors" });
   const save = h("button", { type: "submit", class: "btn amber" }, "保存");
@@ -1098,13 +1098,55 @@ function renderSettings(data) {
     h("div", { class: "content" }, error, form, imdbSection(), ifoSection(), fixed));
 }
 
+// 设置页面的站点列表：启用、名称、类型、Jackett 中的 ID
+const SITE_KINDS = [["unit3d", "UNIT3D（Blutopia、Aither 等）"], ["ptp", "PassThePopcorn"], ["bhd", "BeyondHD"]];
+const SITE_PRESETS = [
+  { id: "blutopia", name: "Blutopia", kind: "unit3d", jackett: "blutopia-api" },
+  { id: "ptp", name: "PassThePopcorn", kind: "ptp", jackett: "" },
+  { id: "bhd", name: "BeyondHD", kind: "bhd", jackett: "" },
+  { id: "unit3d", name: "其他 UNIT3D 站点", kind: "unit3d", jackett: "" },
+];
+function sitesEditor(initial) {
+  const sites = initial.map((site) => ({ ...site }));
+  const box = h("div", { class: "sites" });
+  const render = () => {
+    const rows = sites.map((site, index) => {
+      const enabled = h("input", { type: "checkbox", checked: site.enabled, title: "参与查重和发种清单" });
+      enabled.addEventListener("change", () => { site.enabled = enabled.checked; });
+      const name = h("input", { type: "text", value: site.name, placeholder: "名称", spellcheck: "false" });
+      name.addEventListener("input", () => { site.name = name.value.trim(); });
+      const kind = h("select", {}, SITE_KINDS.map(([value, label]) => h("option", { value, selected: value === site.kind }, label)));
+      kind.addEventListener("change", () => { site.kind = kind.value; });
+      const jackett = h("input", { type: "text", value: site.jackett, placeholder: "Jackett 中的 ID，例如 blutopia-api", list: "jackett-indexers", spellcheck: "false" });
+      jackett.addEventListener("input", () => { site.jackett = jackett.value.trim(); });
+      const remove = h("button", { type: "button", class: "btn small glass" }, "删除");
+      remove.addEventListener("click", () => { sites.splice(index, 1); render(); });
+      return h("div", { class: "site-row" }, h("label", { class: "check" }, enabled, "启用"), name, kind, jackett, remove);
+    });
+    const preset = h("select", {}, SITE_PRESETS.map((p, i) => h("option", { value: String(i) }, p.name)));
+    const add = h("button", { type: "button", class: "btn small glass" }, "添加站点");
+    add.addEventListener("click", () => {
+      const p = SITE_PRESETS[Number(preset.value)];
+      let id = p.id;
+      for (let n = 2; sites.some((s) => s.id === id); n += 1) id = `${p.id}-${n}`;
+      sites.push({ ...p, id, enabled: true });
+      render();
+    });
+    box.replaceChildren(...(rows.length ? rows : [h("p", { class: "hint" }, "还没有站点。")]),
+      h("div", { class: "site-add" }, preset, add));
+  };
+  render();
+  return { node: box, value: () => sites.map(({ id, name, kind, jackett, enabled }) => ({ id, name: name || id, kind, jackett, enabled })) };
+}
+
 // 查重：站点上已有的 DVD 原盘（格式和制式都相同的排在前面并标出）
 function dupesPanel(sites, names) {
   const ours = names ? `${names.kind}${names.standard ? ` · ${names.standard}` : ""}` : "";
   const blocks = sites.map((site) => {
-    if (site.error) return h("p", {}, h("b", {}, site.site), "：", h("span", { class: "bad" }, `查询失败：${site.error}`));
-    if (!site.items.length) return h("p", {}, h("b", {}, site.site), "：没有这部片的 DVD 原盘");
-    return h("div", {}, h("p", {}, h("b", {}, site.site), `：已有 ${site.items.length} 个 DVD 原盘`),
+    const label = site.name || site.site;
+    if (site.error) return h("p", {}, h("b", {}, label), "：", h("span", { class: "bad" }, site.error));
+    if (!site.items.length) return h("p", {}, h("b", {}, label), "：", h("span", { class: "good" }, "没有这部片的 DVD 原盘"));
+    return h("div", {}, h("p", {}, h("b", {}, label), `：已有 ${site.items.length} 个 DVD 原盘`),
       h("ul", { class: "dupes" }, site.items.map((e) => h("li", { class: e.same ? "same" : "" },
         e.size_match === "exact" ? h("span", { class: "chip bad" }, "大小完全相同：很可能就是这张盘")
           : e.size_match === "near" ? h("span", { class: "chip warn" }, `大小只差 ${formatBytes(Math.abs(e.size_diff))}（可能多了或少了 nfo、封面）`)
@@ -1236,7 +1278,7 @@ function collectSettings(ctl, v, pathMapText) {
   put("jackett", "queries", ctl["jackett.queries"].value.split(/[\s,，]+/).filter(Boolean), j.queries);
   put("jackett", "interval", int("jackett.interval"), j.interval);
   put("jackett", "films_only", ctl["jackett.films_only"].checked, j.films_only);
-  put("jackett", "dupe_indexers", ctl["jackett.dupe_indexers"].value.split(/[\s,，]+/).filter(Boolean), j.dupe_indexers);
+  put("sites", "list", ctl.sites.value(), v.sites);
   if (invalid) {
     toast("请填写整数");
     ctl[invalid].focus();
@@ -1528,6 +1570,26 @@ function releaseRow(r, s) {
       `IMDb ${r.imdb.id} · ${r.imdb.title}${r.imdb.year ? ` (${r.imdb.year})` : ""}`);
   } else if (r.imdb) {
     imdb = h("span", { class: "release-imdb missing" }, `IMDb：${r.imdb.reason}`);
+  }
+  // 下载前查重：IMDb 对上了才能查
+  if (r.imdb && r.imdb.id && (r.status === "new" || r.status === "ignored")) {
+    const dupeBox = h("div");
+    const check = h("button", { type: "button", class: "btn small glass" }, "查重");
+    check.addEventListener("click", async () => {
+      check.disabled = true;
+      dupeBox.replaceChildren(h("p", { class: "hint" }, "查询中…"));
+      try {
+        const d = await api(`${base}/dupes`);
+        dupeBox.replaceChildren(d.sites.length ? dupesPanel(d.sites, { kind: d.kind, standard: d.standard })
+          : notice("", "还没有启用的站点：在设置页面的“站点”一节添加，例如 Blutopia。"));
+      } catch (error) {
+        if (!(error instanceof AuthError)) dupeBox.replaceChildren(notice("bad", error.message));
+      } finally {
+        check.disabled = false;
+      }
+    });
+    side.push(check);
+    extra.push(dupeBox);
   }
   return h("li", { class: "release" },
     h("div", { class: "info" }, title, h("div", { class: "release-facts" }, facts.map((f) => h("span", {}, f))), imdb,

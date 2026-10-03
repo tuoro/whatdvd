@@ -440,3 +440,13 @@ a.release-imdb:hover { text-decoration: underline; }
 .dupes li a { color: inherit; }
 .dupes li.same a, .dupes li.same > span:not(.chip):not(.hint) { font-weight: 700; }
 .dupes-panel .bad { color: var(--bad); }
+.sites { display: grid; gap: 8px; }
+.site-row { display: grid; grid-template-columns: auto 1fr 1fr 1fr auto; gap: 8px; align-items: center; }
+.site-add { display: flex; gap: 8px; align-items: center; }
+.site-row > * { min-width: 0; }
+.site-row input[type="text"], .site-row select { width: 100%; box-sizing: border-box; }
+@media (max-width: 720px) {
+  .site-row { grid-template-columns: 1fr auto; padding-bottom: 8px; border-bottom: 1px solid var(--line, transparent); }
+  .site-row input[type="text"], .site-row select { grid-column: 1 / -1; }
+}
+.dupes-panel .good { color: var(--ok); }

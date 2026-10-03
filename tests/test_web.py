@@ -869,6 +869,10 @@ def test_release_filters_and_paging(tmp_path: Path, media: Path) -> None:
         assert (found["id"], found["title"], found["year"]) == ("tt0091251", "Come and See", 1985)
         missing = client.get("/api/releases?q=Неизвестный").json()["releases"][0]["imdb"]
         assert missing["id"] is None and "没有" in missing["reason"]
+        # 下载前查重：IMDb 对上了才能查（没有启用的站点时结果为空）
+        checked = client.get("/api/releases/d/dupes").json()
+        assert (checked["imdb"]["id"], checked["kind"], checked["sites"]) == ("tt0091251", "DVD9", [])
+        assert client.get("/api/releases/e/dupes").status_code == 400
         # 只看 IMDb 找得到的
         assert ids("imdb=true") == ["d"]
         assert client.get("/api/releases?imdb=true").json()["imdb_dataset"] is True
@@ -924,15 +928,22 @@ def test_dupes_api(tmp_path: Path, media: Path, monkeypatch: pytest.MonkeyPatch)
             pass
 
     monkeypatch.setattr(web_app, "Jackett", FakeJackett)
+    from whatdvd.web.config import SiteConfig
+
+    sites = (SiteConfig("blutopia", "Blutopia", "unit3d", "blutopia-api"), SiteConfig("broken", "Broken", "unit3d", "broken"),
+             SiteConfig("ptp", "PassThePopcorn", "ptp", ""), SiteConfig("off", "Off", "unit3d", "off-api", enabled=False))
     config = ServerConfig(roots=(media.resolve(),), output_dir=tmp_path / "out", token=TOKEN,
-                          database=tmp_path / "state.db",
-                          jackett=JackettConfig("http://jackett", "k", dupe_indexers=("blutopia-api", "broken")))
+                          database=tmp_path / "state.db", jackett=JackettConfig("http://jackett", "k"), sites=sites)
     app = create_app(config, runner=FakeRunner(), background=False)
     with TestClient(app, headers={"Authorization": f"Bearer {TOKEN}"}) as client:
         sites = client.get("/api/dupes", params={"imdb": "tt0091251", "kind": "2xDVD9", "standard": "PAL"}).json()["sites"]
-        assert [(s["site"], len(s["items"]), bool(s["error"])) for s in sites] == [("blutopia-api", 1, False), ("broken", 0, True)]
-        assert sites[0]["items"][0]["same"] is True
+        # 取消勾选的站点不参与；没有填 Jackett ID 的不查，写明原因
+        assert [(s["site"], len(s["items"]), bool(s["error"])) for s in sites] == [
+            ("blutopia", 1, False), ("broken", 0, True), ("ptp", 0, True)]
+        assert sites[0]["name"] == "Blutopia" and sites[0]["items"][0]["same"] is True
+        assert "Jackett 中的 ID" in sites[2]["error"]
         client.get("/api/dupes", params={"imdb": "tt0091251", "kind": "DVD9"})  # 换了格式也用缓存
         assert calls.count(("blutopia-api", "tt0091251")) == 1
         assert client.get("/api/dupes", params={"imdb": "nonsense", "kind": "DVD9"}).status_code == 400
-        assert client.get("/api/settings").json()["values"]["jackett"]["dupe_indexers"] == ["blutopia-api", "broken"]
+        assert [site["id"] for site in client.get("/api/settings").json()["values"]["sites"]] == ["blutopia", "broken", "ptp", "off"]
+        assert ("off", "tt0091251") not in calls and ("off-api", "tt0091251") not in calls

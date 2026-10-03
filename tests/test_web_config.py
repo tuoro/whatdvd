@@ -227,3 +227,19 @@ def test_seed_dir_and_seed_category(tmp_path: Path) -> None:
     assert load_config(write(tmp_path, base)).seed_dir is None
     with pytest.raises(ConfigError, match="seed_category"):
         load_config(write(tmp_path, base + '[qbittorrent]\nurl = "http://qb:8080"\nseed_category = "whatdvd"\n'))
+
+
+def test_sites_config_and_migration(tmp_path: Path) -> None:
+    """站点列表；旧版本的 jackett.dupe_indexers 每个当作一个 UNIT3D 站点。"""
+    root = tmp_path / "media"
+    root.mkdir()
+    head = f'roots = ["{root}"]\ntoken = "t"\n'
+    config = load_config(write(tmp_path, head + '[jackett]\nurl = "http://j"\napi_key = "k"\ndupe_indexers = ["blutopia-api"]\n'))
+    assert [(s.id, s.kind, s.jackett, s.enabled) for s in config.sites] == [("blutopia-api", "unit3d", "blutopia-api", True)]
+    config = load_config(write(tmp_path, head + '[sites]\nlist = [{ id = "blu", name = "Blutopia", kind = "unit3d", jackett = "blutopia-api" }, '
+                                                '{ id = "ptp", name = "PTP", kind = "ptp", enabled = false }]\n'))
+    assert [(s.id, s.name, s.kind, s.jackett, s.enabled) for s in config.sites] == [
+        ("blu", "Blutopia", "unit3d", "blutopia-api", True), ("ptp", "PTP", "ptp", "", False)]
+    for bad in ('{ id = "x y", kind = "unit3d" }', '{ id = "a", kind = "nope" }', '{ id = "a", kind = "ptp" }, { id = "a", kind = "bhd" }'):
+        with pytest.raises(ConfigError):
+            load_config(write(tmp_path, head + f"[sites]\nlist = [{bad}]\n"))
