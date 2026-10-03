@@ -572,9 +572,17 @@ class Watcher:
             raise WatcherError("找不到这个资源")
         if record.status != "failed" or not (record.local_path or record.remote_path):
             raise WatcherError("只有下载完成后处理失败的资源可以重新处理")
+        remote = record.remote_path
+        if remote is None and record.info_hash and self.qbit is not None:
+            # 旧版本没有记下 qB 中的路径：向 qB 再要一次
+            try:
+                found = await asyncio.to_thread(self.qbit.torrents, hashes=[record.info_hash])
+            except QbitError:
+                found = []
+            remote = next((t.content_path for t in found if t.hash == record.info_hash and t.content_path), None)
         # 按现在的 path_map 重新换算（改了路径映射后点“重新处理”就能找到）
-        local = self._path_map.to_local(record.remote_path) if record.remote_path else Path(record.local_path or "")
-        self._start(record, local)
+        local = self._path_map.to_local(remote) if remote else Path(record.local_path or "")
+        self._start(record, local, remote)
         updated = self.store.get(record_id)
         assert updated is not None
         return updated

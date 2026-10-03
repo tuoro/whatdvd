@@ -562,3 +562,18 @@ def test_missing_path_suggests_mapping_and_reprocess_uses_it(
     h.watcher._path_map = PathMap((("/home/me", str(downloads)),))  # 设置页面改了路径映射
     record = h.run(lambda: h.watcher.reprocess(record.id))
     assert record.status == "processing" and h.submitted == [downloads / "qb" / "Nepobedimye"]
+
+
+def test_reprocess_asks_qbit_for_path_of_old_records(h: Harness, services: FakeServices, downloads: Path) -> None:
+    """旧版本失败的记录没有 qB 中的路径：重新处理时按 hash 向 qB 要。"""
+    from whatdvd.qbit import PathMap
+    from whatdvd.store import Record
+
+    _make_dvd(downloads / "Old Film")
+    services.torrent("a1" * 20, "stalledUP", 1.0, "/home/me/Old Film")
+    h.watcher.store.save(Record(id="old", title="Old Film", source="RuTor", status="failed", info_hash="a1" * 20,
+                                local_path="/media/Old Film", error="下载完成，但 /media/Old Film 路径不存在。"))
+    h.watcher._path_map = PathMap((("/home/me", str(downloads)),))
+    record = h.run(lambda: h.watcher.reprocess("old"))
+    assert record.status == "processing" and record.remote_path == "/home/me/Old Film"
+    assert h.submitted == [downloads / "Old Film"]
