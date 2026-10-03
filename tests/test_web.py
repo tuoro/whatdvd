@@ -666,7 +666,7 @@ def test_site_names_from_run_result(tmp_path: Path) -> None:
                         "year": 1985, "imdb_id": "tt0091251"}, "region": "RUS", "edition": ""}
     names = _site_names(result, params)
     assert names == {"bhd": "Come and See AKA Иди и смотри 1985 RUS PAL 2xDVD9 MPEG-2 DD5.1", "audio": "DD5.1",
-                     "imdb_id": "tt0091251", "tmdb_url": None}
+                     "imdb_id": "tt0091251", "tmdb_url": None, "kind": "2xDVD9", "standard": "PAL"}
     assert _site_names(result, {}) is None
 
 
@@ -897,3 +897,42 @@ def test_settings_enable_rutor(settings_client: tuple[TestClient, Path]) -> None
     assert response.status_code == 400
     response = client.post("/api/settings/test/rutor", json={"url": "http://127.0.0.1:1"})
     assert response.status_code == 400 and "连不上 rutor" in response.json()["detail"]
+
+
+def test_dupes_api(tmp_path: Path, media: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """查重：按 IMDb 编号查设置里的站点，列出已有的 DVD 原盘；同一部片的结果缓存。"""
+    import whatdvd.web.app as web_app
+    from whatdvd.indexer import IndexerError, Release
+    from whatdvd.web.config import JackettConfig
+
+    calls: list[tuple[str, str]] = []
+
+    class FakeJackett:
+        def __init__(self, url: str, api_key: str, *, indexer: str = "all", **_: Any) -> None:
+            self.indexer = indexer
+
+        def search_imdb(self, imdb_id: str) -> list[Release]:
+            calls.append((self.indexer, imdb_id))
+            if self.indexer == "broken":
+                raise IndexerError("Jackett 返回错误：Unknown indexer: broken")
+            return [Release(guid=t, indexer="Blutopia", title=t, size=1, published=None, details_url=None,
+                            download_url=None, magnet=None, info_hash=None, seeders=None)
+                    for t in ("Come and See AKA Idi i smotri 1985 PAL 2xDVD9 DD 5.1",
+                              "Come and See AKA Idi i smotri 1985 1080p GER Blu-ray AVC LPCM 2.0")]
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(web_app, "Jackett", FakeJackett)
+    config = ServerConfig(roots=(media.resolve(),), output_dir=tmp_path / "out", token=TOKEN,
+                          database=tmp_path / "state.db",
+                          jackett=JackettConfig("http://jackett", "k", dupe_indexers=("blutopia-api", "broken")))
+    app = create_app(config, runner=FakeRunner(), background=False)
+    with TestClient(app, headers={"Authorization": f"Bearer {TOKEN}"}) as client:
+        sites = client.get("/api/dupes", params={"imdb": "tt0091251", "kind": "2xDVD9", "standard": "PAL"}).json()["sites"]
+        assert [(s["site"], len(s["items"]), bool(s["error"])) for s in sites] == [("blutopia-api", 1, False), ("broken", 0, True)]
+        assert sites[0]["items"][0]["same"] is True
+        client.get("/api/dupes", params={"imdb": "tt0091251", "kind": "DVD9"})  # 换了格式也用缓存
+        assert calls.count(("blutopia-api", "tt0091251")) == 1
+        assert client.get("/api/dupes", params={"imdb": "nonsense", "kind": "DVD9"}).status_code == 400
+        assert client.get("/api/settings").json()["values"]["jackett"]["dupe_indexers"] == ["blutopia-api", "broken"]

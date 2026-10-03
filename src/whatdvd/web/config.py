@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 import tomllib
 from collections.abc import Sequence
@@ -61,6 +62,8 @@ class JackettConfig:
     """自动搜索的间隔（分钟），0 为只手动刷新。"""
     films_only: bool = True
     """只搜影视类：Torznab 分类 2000（电影）、5000（电视剧、动画、纪录片），去掉音乐、培训等。"""
+    dupe_indexers: tuple[str, ...] = ()
+    """查重的站点：Jackett 中的站点 ID（例如 "blutopia-api"），片名确定后按 IMDb 编号查这些站点上已有的 DVD。"""
 
 
 @dataclass(frozen=True)
@@ -153,6 +156,7 @@ _SCHEMA: dict[tuple[str, str], type | tuple[type, ...]] = {
     ("jackett", "queries"): list,
     ("jackett", "interval"): int,
     ("jackett", "films_only"): bool,
+    ("jackett", "dupe_indexers"): list,
     ("rutor", "url"): str,
     ("rutor", "queries"): list,
     ("rutor", "interval"): int,
@@ -352,6 +356,9 @@ def _jackett_config(flat: dict[tuple[str, str], Any]) -> JackettConfig | None:
     queries = flat.get(("jackett", "queries"), list(JackettConfig.queries))
     if not queries or not all(isinstance(q, str) and q.strip() for q in queries):
         raise ConfigError("jackett.queries 必须是非空字符串列表")
+    dupe_indexers = flat.get(("jackett", "dupe_indexers"), [])
+    if not all(isinstance(i, str) and re.fullmatch(r"[\w.-]*", i.strip()) for i in dupe_indexers):
+        raise ConfigError("jackett.dupe_indexers 必须是 Jackett 中的站点 ID 列表，例如 [\"blutopia-api\"]")
     interval = flat.get(("jackett", "interval"), 60)
     if interval != 0 and interval < 10:
         raise ConfigError("jackett.interval 不能小于 10 分钟（0 为只手动刷新）")
@@ -362,6 +369,7 @@ def _jackett_config(flat: dict[tuple[str, str], Any]) -> JackettConfig | None:
         queries=tuple(q.strip() for q in queries),
         interval=interval,
         films_only=flat.get(("jackett", "films_only"), True),
+        dupe_indexers=tuple(dict.fromkeys(i.strip() for i in dupe_indexers if i.strip())),
     )
 
 

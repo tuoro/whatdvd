@@ -534,6 +534,22 @@ function titlePanel(path, info) {
     fill.addEventListener("click", () => { const box = $("opt-seedname"); if (box) { box.value = t.ptp_name; box.focus(); } });
     const clear = h("button", { type: "button", class: "btn small glass" }, "不用这个");
     clear.addEventListener("click", () => { state.titles.delete(path); renderChosen(); });
+    // 查重：按 IMDb 编号查设置里的查重站点上已有的 DVD 原盘
+    const dupeBox = h("div");
+    const dupeButton = h("button", { type: "button", class: "btn small glass" }, "查重");
+    dupeButton.addEventListener("click", async () => {
+      dupeButton.disabled = true;
+      dupeBox.replaceChildren(h("p", { class: "hint" }, "查询中…"));
+      try {
+        const r = await api(`/api/dupes?imdb=${encodeURIComponent(t.imdb_id)}&kind=${encodeURIComponent(info.disc_kind)}`);
+        dupeBox.replaceChildren(r.sites.length ? dupesPanel(r.sites, { kind: info.disc_kind })
+          : notice("", "还没有设置查重站点：在设置页面 Jackett 一节填写，例如 blutopia-api。"));
+      } catch (error) {
+        if (!(error instanceof AuthError)) dupeBox.replaceChildren(notice("bad", error.message));
+      } finally {
+        dupeButton.disabled = false;
+      }
+    });
     chosenBox.replaceChildren(h("div", { class: "title-chosen" },
       h("p", {}, h("b", {}, `${t.title}${t.year ? ` (${t.year})` : ""}`),
         t.original_title && t.original_title !== t.title ? h("span", {}, ` · 原名 ${t.original_title}`) : null,
@@ -550,7 +566,7 @@ function titlePanel(path, info) {
         h("dt", {}, "版本"), h("dd", {}, field("edition", "可留空，例如 Director's Cut")),
         h("dt", {}, "地区或发行商"), h("dd", {}, field("region", "可留空，例如 RUS、Criterion Collection"))),
       h("p", { class: "hint" }, "生成截图时会带上这个片名。"),
-      clear));
+      h("div", { class: "actions" }, t.imdb_id ? dupeButton : null, clear), dupeBox));
   };
   go.addEventListener("click", search);
   query.addEventListener("keydown", (event) => { if (event.key === "Enter") search(); });
@@ -838,6 +854,7 @@ function renderResult(job) {
       h("pre", {}, n.bhd)));
     if (!n.audio) nodes.push(notice("warn", "MediaInfo 中没有读到音轨，BHD 标题缺少音轨部分，请手动补上。"));
   }
+  if (result.dupes) nodes.push(dupesPanel(result.dupes, result.names));
   if (result.seed_path && state.config.seed_dir && result.seed_path.startsWith(`${state.config.seed_dir.path}/`)) {
     nodes.push(h("p", { class: "seed-row" }, "发种目录：", h("code", { class: "path" }, result.seed_path)));
   }
@@ -1039,7 +1056,9 @@ function renderSettings(data) {
       row("站点", h("span", {}, input("jackett.indexer", v.jackett.indexer, { list: "jackett-indexers" }), indexerList), "all 为全部已配置的站点；点“测试连接”后可以从列表中选"),
       row("搜索关键词", input("jackett.queries", v.jackett.queries.join(" ")), "多个用空格分隔"),
       row("自动搜索", number("jackett.interval", v.jackett.interval, 0, 10080), "分钟一次；0 为只手动搜索"),
-      row("只要影视类", toggle("jackett.films_only", v.jackett.films_only, "只要分类 2000（电影）和 5000（电视剧、动画、纪录片），去掉音乐、培训、体育等；Jackett 的 rutor 不区分分类，无法过滤"))),
+      row("只要影视类", toggle("jackett.films_only", v.jackett.films_only, "只要分类 2000（电影）和 5000（电视剧、动画、纪录片），去掉音乐、培训、体育等；Jackett 的 rutor 不区分分类，无法过滤")),
+      row("查重站点", h("span", {}, input("jackett.dupe_indexers", v.jackett.dupe_indexers.join(" "), { list: "jackett-indexers", placeholder: "例如 blutopia-api，留空不查重" })),
+        "Jackett 中的站点 ID，多个用空格分隔。片名确定后按 IMDb 编号查这些站点上已有的 DVD 原盘，列在任务结果中（只读，不上传）")),
     section("TMDB", "填写 API Key 即启用：在来源页查片名，按 IMDb / TMDB 的英文名和原名给出 PTP 发种名称和 BHD 标题。API Key 在 themoviedb.org 的账号设置中免费申请，v3 API Key 和 v4 读取令牌都可以。",
       row("API Key", h("span", { class: "inline" }, secret("tmdb.api_key", v.tmdb.api_key_set, "TMDB 的 API Key 或读取令牌"), tmTest), tmResult)));
 
@@ -1077,6 +1096,22 @@ function renderSettings(data) {
   setMain(
     hero({ eyebrow: "whatdvd", title: "设置", compact: true, meta: [h("span", {}, "保存后立即生效，不用重启")] }),
     h("div", { class: "content" }, error, form, imdbSection(), ifoSection(), fixed));
+}
+
+// 查重：站点上已有的 DVD 原盘（格式和制式都相同的排在前面并标出）
+function dupesPanel(sites, names) {
+  const ours = names ? `${names.kind}${names.standard ? ` · ${names.standard}` : ""}` : "";
+  const blocks = sites.map((site) => {
+    if (site.error) return h("p", {}, h("b", {}, site.site), "：", h("span", { class: "bad" }, `查询失败：${site.error}`));
+    if (!site.items.length) return h("p", {}, h("b", {}, site.site), "：没有这部片的 DVD 原盘");
+    return h("div", {}, h("p", {}, h("b", {}, site.site), `：已有 ${site.items.length} 个 DVD 原盘`),
+      h("ul", { class: "dupes" }, site.items.map((e) => h("li", { class: e.same ? "same" : "" },
+        e.same ? h("span", { class: "chip warn" }, "格式、制式相同") : null,
+        e.url && /^https?:\/\//i.test(e.url) ? h("a", { href: e.url, target: "_blank", rel: "noopener noreferrer" }, e.title) : h("span", {}, e.title),
+        h("span", { class: "hint" }, ` · ${formatBytes(e.size)}${e.seeders !== null && e.seeders !== undefined ? ` · ${e.seeders} 做种` : ""}`)))));
+  });
+  return h("section", { class: "dupes-panel" }, h("h3", {}, "查重", ours ? h("span", { class: "hint" }, `　这张盘：${ours}`) : null),
+    ...blocks, h("p", { class: "hint" }, "只列出站点上已有的 DVD 原盘，是否算重复、能不能替换请按站点规则判断。"));
 }
 
 // IMDb 数据集：状态和“下载 / 更新”按钮，更新时轮询进度
@@ -1199,6 +1234,7 @@ function collectSettings(ctl, v, pathMapText) {
   put("jackett", "queries", ctl["jackett.queries"].value.split(/[\s,，]+/).filter(Boolean), j.queries);
   put("jackett", "interval", int("jackett.interval"), j.interval);
   put("jackett", "films_only", ctl["jackett.films_only"].checked, j.films_only);
+  put("jackett", "dupe_indexers", ctl["jackett.dupe_indexers"].value.split(/[\s,，]+/).filter(Boolean), j.dupe_indexers);
   if (invalid) {
     toast("请填写整数");
     ctl[invalid].focus();

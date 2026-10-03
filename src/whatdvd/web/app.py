@@ -29,9 +29,10 @@ from ..post import DEFAULT_TEMPLATE
 from ..runner import Runner, SubprocessRunner
 from ..sources import find_sources, is_iso
 from ..checks import describe_extra_files, find_extra_files
+from ..dupes import existing_dvds
 from ..ifo_info import SampleLog, read_vmg
 from ..imdb_dataset import Cancelled, DatasetError, ImdbDataset, Progress, build
-from ..indexer import IndexerError, Jackett, film_categories
+from ..indexer import IndexerError, Jackett, Release, film_categories
 from ..qbit import QBittorrent, QbitError
 from ..resolution import ASPECT_MODES
 from ..naming import clean_title
@@ -132,6 +133,7 @@ def settings_values(c: ServerConfig) -> dict[str, Any]:
             "queries": list(jk.queries) if jk else list(JackettConfig.queries),
             "interval": jk.interval if jk else 60,
             "films_only": jk.films_only if jk else True,
+            "dupe_indexers": list(jk.dupe_indexers) if jk else [],
         },
         "tmdb": {"api_key_set": bool(c.tmdb_api_key)},
     }
@@ -222,18 +224,20 @@ def _site_names(result: RunResult, params: dict[str, Any]) -> dict[str, Any] | N
     audio = None
     if first.output is not None and first.output.mediainfo.is_file():
         audio = audio_from_mediainfo(first.output.mediainfo.read_text(encoding="utf-8"))
+    kind = disc_kind([d.analysis.disc.media_type for d in analyzed if d.analysis is not None])
     bhd = bhd_title(
         title=chosen["title"],
         original_title=chosen.get("original_title", ""),
         original_language=chosen.get("original_language", ""),
         year=chosen.get("year"),
         standard=first.analysis.standard,
-        kind=disc_kind([d.analysis.disc.media_type for d in analyzed if d.analysis is not None]),
+        kind=kind,
         audio=audio,
         region=params.get("region", ""),
         edition=params.get("edition", ""),
     )
-    return {"bhd": bhd, "audio": audio, "imdb_id": chosen.get("imdb_id"), "tmdb_url": chosen.get("tmdb_url")}
+    return {"bhd": bhd, "audio": audio, "imdb_id": chosen.get("imdb_id"), "tmdb_url": chosen.get("tmdb_url"),
+            "kind": kind, "standard": first.analysis.standard}
 
 
 def _serialize_run(result: RunResult) -> dict[str, Any]:
@@ -284,6 +288,9 @@ def _serialize_run(result: RunResult) -> dict[str, Any]:
         names.append(post_file)
     return {"ok": result.ok, "discs": discs, "post_file": post_file, "post": post_text, "files": names}
 
+
+DUPE_CACHE_SECONDS = 3600
+"""查重结果缓存多久（秒）：同一部片反复处理时不重复请求站点。"""
 
 JACKETT_DELAY = 2.0
 """通过 Jackett 连续搜索时的间隔（秒），避免触发 kinozal 等站点的防刷限制。"""
@@ -950,6 +957,40 @@ def create_app(
             )
         return imdb_matches[key]
 
+    # ---------- 查重：按 IMDb 编号在站点上查已有的 DVD 原盘（通过 Jackett，只读） ----------
+
+    dupe_cache: dict[tuple[str, str], tuple[float, list[Release]]] = {}
+
+    def check_dupes(imdb_id: str, kind: str, standard: str | None) -> list[dict[str, Any]]:
+        """每个查重站点：{"site", "error", "items"}。同一站点同一部片的结果缓存一小时。"""
+        jk = cfg().jackett
+        sites = []
+        for site in jk.dupe_indexers if jk is not None else ():
+            assert jk is not None
+            cached = dupe_cache.get((site, imdb_id))
+            error = None
+            if cached is not None and time.monotonic() - cached[0] < DUPE_CACHE_SECONDS:
+                releases = cached[1]
+            else:
+                client = Jackett(jk.url, jk.api_key, indexer=site, delay=JACKETT_DELAY)
+                try:
+                    releases = client.search_imdb(imdb_id)
+                    dupe_cache[(site, imdb_id)] = (time.monotonic(), releases)
+                except IndexerError as exc:
+                    releases, error = [], str(exc)
+                finally:
+                    client.close()
+            items = [asdict(e) for e in existing_dvds(site, releases, kind, standard)]
+            sites.append({"site": site, "error": error, "items": items})
+        return sites
+
+    @app.get("/api/dupes", dependencies=auth)
+    async def dupes_api(imdb: str, kind: str, standard: str | None = None) -> dict[str, Any]:
+        """片名确定后查重：kind 为这张盘的格式（"DVD9"、"2xDVD9"），standard 为 PAL / NTSC。"""
+        if not re.fullmatch(r"tt\d{7,9}", imdb):
+            raise HTTPException(400, "IMDb 编号格式不对，例如 tt0091251")
+        return {"sites": await asyncio.to_thread(check_dupes, imdb, kind, standard or None)}
+
     # ---------- IFO 统计（处理过的盘的 VIDEO_TS.IFO 头部，可导出 CSV） ----------
 
     def ifo_samples() -> SampleLog:
@@ -1082,7 +1123,18 @@ def create_app(
                 })
         if names:
             reporter.info(f"BHD 标题：{names['bhd']}")
-        return {**serialized, "seed_path": str(path), "names": names}
+        dupes = None
+        jk = cfg().jackett
+        if names and names.get("imdb_id") and jk is not None and jk.dupe_indexers:
+            dupes = check_dupes(names["imdb_id"], names["kind"], names["standard"])
+            for site in dupes:
+                if site["error"]:
+                    reporter.error(f"查重（{site['site']}）失败：{site['error']}")
+                for item in site["items"]:
+                    reporter.info(f"查重（{site['site']}）：{'【格式和制式相同】' if item['same'] else ''}{item['title']}")
+                if not site["error"] and not site["items"]:
+                    reporter.info(f"查重（{site['site']}）：没有这部片的 DVD 原盘")
+        return {**serialized, "seed_path": str(path), "names": names, "dupes": dupes}
 
     def torrent_worker(job: Job, reporter: JobReporter) -> dict[str, Any]:
         check_tools(runner, ["mktorrent"])

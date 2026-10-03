@@ -159,15 +159,23 @@ class Jackett:
         self._client.close()
 
     def search(self, query: str) -> list[Release]:
+        params = {"t": "search", "q": query}
+        if self._films_only:  # Jackett 按分类分别向站点搜索，每个分类各有一份条数上限
+            params["cat"] = FILM_QUERY_CATEGORIES
+        releases = self._results(params)
+        return [r for r in releases if is_film(r)] if self._films_only else releases
+
+    def search_imdb(self, imdb_id: str) -> list[Release]:
+        """按 IMDb 编号搜电影（Torznab movie-search，查重用）。"""
+        return self._results({"t": "movie", "imdbid": imdb_id})
+
+    def _results(self, params: dict[str, str]) -> list[Release]:
         url = f"{self._base}/api/v2.0/indexers/{quote(self._indexer, safe='')}/results/torznab/api"
         try:
             wait = self._last_search + self._delay - time.monotonic()
             if wait > 0:
                 time.sleep(wait)
-            params = {"apikey": self._api_key, "t": "search", "q": query}
-            if self._films_only:  # Jackett 按分类分别向站点搜索，每个分类各有一份条数上限
-                params["cat"] = FILM_QUERY_CATEGORIES
-            response = self._client.get(url, params=params)
+            response = self._client.get(url, params={"apikey": self._api_key, **params})
         except httpx.HTTPError as error:
             raise IndexerError(f"连不上 Jackett：{error or type(error).__name__}") from error
         finally:
@@ -180,8 +188,7 @@ class Jackett:
             except (ValueError, AttributeError):
                 detail = None
             raise IndexerError(f"Jackett 返回错误：{detail or f'HTTP {response.status_code}'}")
-        releases = parse_torznab(response.text)
-        return [r for r in releases if is_film(r)] if self._films_only else releases
+        return parse_torznab(response.text)
 
     def indexers(self) -> list[tuple[str, str]]:
         """Jackett 中已配置的站点：[(ID, 名称)]。也用来测试地址和 API Key 是否正确。"""

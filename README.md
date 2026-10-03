@@ -170,6 +170,16 @@ films_only = true        # 只要影视类
 - 状态保存在 `database`（SQLite）中，重启后保留；重启时正在处理的任务会标为失败，可以点“重新处理”。
 - 做种由 qB 继续负责，whatdvd 不删除、不移动下载的文件。
 
+## 查重（Jackett，可选）
+
+片名确定（有 IMDb 编号）后，按 IMDb 编号在站点上查这部片已有的 DVD 原盘，只读，不上传：
+
+- 在设置页面 Jackett 一节的“查重站点”填写 Jackett 中的站点 ID，多个用空格分隔，例如 `blutopia-api`（站点要先在 Jackett 中添加好）。配置文件写 `dupe_indexers = ["blutopia-api"]`。
+- 处理完成后，任务结果中列出每个站点已有的 DVD 原盘：标题（链接到站点上的种子页）、大小、做种数；格式（DVD5、DVD9、2xDVD9……）和制式（PAL、NTSC）都和这张盘相同的排在前面并标出。来源页选好片名后也可以点“查重”。
+- 只看 DVD 原盘：Blu-ray、Remux、WEB-DL、压制和单个视频文件都不算。站点上的 DVD 标题按 Upload-Assistant 的写法（`Come and See AKA Idi i smotri 1985 PAL 2xDVD9 DD 5.1`）识别格式和制式。
+- 只列出来，不判断是否重复：能不能发、能不能替换请按站点规则判断。同一站点同一部片的结果缓存一小时，不会反复请求。
+- 已适配 Blutopia（Jackett 的 `blutopia-api`）。
+
 ## Docker
 
 镜像基于 Debian 12，以普通用户（uid 1000）运行，不需要 `privileged`，也不 mount ISO。

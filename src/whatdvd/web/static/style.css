@@ -431,3 +431,11 @@ a.release-imdb:hover { text-decoration: underline; }
 .imdb-status .hint { color: var(--muted); }
 .title-option .imdb-mark { color: var(--amber); font: 500 11.5px var(--mono); }
 .title-option .imdb-mark.missing { color: var(--muted); font-family: inherit; }
+
+.dupes-panel { margin: 18px 0; }
+.dupes-panel h3 { margin: 0 0 8px; font-size: 15px; }
+.dupes { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 6px; }
+.dupes li { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; overflow-wrap: anywhere; }
+.dupes li a { color: inherit; }
+.dupes li.same a, .dupes li.same > span:not(.chip):not(.hint) { font-weight: 700; }
+.dupes-panel .bad { color: var(--bad); }
